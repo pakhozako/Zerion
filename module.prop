@@ -1,0 +1,6 @@
+id=@MODULE_ID@
+name=Zerion
+version=v@MODULE_VERSION@
+versionCode=1
+author=Zerion project
+description=Manage dexopt/ART compilation properties with snapshot, status and rollback.
