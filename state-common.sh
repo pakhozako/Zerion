@@ -113,9 +113,16 @@ write_install_state() {  # $1 = state.info path
 
 # Refresh state.json after a runtime action: preserve every static field,
 # bump the matching counter and stamp last_action/last_action_at.
+#
+# state.json is normally written at INSTALL time; if it is missing here (e.g.
+# deleted by the user or a module update was interrupted), rebuild it from
+# state.info first so runtime actions are never recorded into nothing.
 refresh_state() {  # $1 = action name (apply|reset|collect|status)
   local action="$1" applyc resetc now
-  [ -f "$STATE_FILE" ] || return 0
+  if [ ! -f "$STATE_FILE" ]; then
+    [ -n "${MODDIR:-}" ] || return 1
+    write_install_state "$MODDIR/state.info" || return 1
+  fi
   applyc=$(state_num "$STATE_FILE" apply_count)
   resetc=$(state_num "$STATE_FILE" reset_count)
   case "$action" in

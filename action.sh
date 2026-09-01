@@ -12,17 +12,22 @@
 # (apply_count/reset_count/last_action).
 
 MODDIR=${0%/*}
-DATA_DIR=/data/adb/zerion
 EXPECTED="$MODDIR/expected.props"
+
+# Shared state.json helpers (sourced; must not exit). state-common.sh sets
+# DATA_DIR (honoring ZERION_DATA_DIR); ORIGINALS must be computed AFTER it is
+# sourced so both follow the same location.
+. "$MODDIR/state-common.sh"
 ORIGINALS="$DATA_DIR/originals.json"
 
-# Shared state.json helpers (sourced; must not exit).
-. "$MODDIR/state-common.sh"
-
-set_prop() { resetprop -n "$1" "$2" 2>/dev/null || setprop "$1" "$2"; }
+set_prop() {
+  resetprop -n "$1" "$2" 2>/dev/null && return 0
+  setprop "$1" "$2"
+}
 del_prop() {
-  resetprop -n --delete "$1" 2>/dev/null || resetprop -n -d "$1" 2>/dev/null \
-    || setprop "$1" ""
+  resetprop -n --delete "$1" 2>/dev/null && return 0
+  resetprop -n -d "$1" 2>/dev/null && return 0
+  setprop "$1" ""
 }
 
 # Emit "name=value" lines from originals.json (flat JSON object).
@@ -48,6 +53,7 @@ read_original() {
 }
 
 cmd_status() {
+  [ -f "$EXPECTED" ] || { echo "Zerion: expected.props missing at $EXPECTED" >&2; return 1; }
   refresh_state status
   printf '%-46s %-9s %-16s %-16s %-16s\n' "PROPERTY" "STATUS" "CURRENT" "EXPECTED" "ORIGINAL"
   while IFS= read -r line; do
@@ -75,33 +81,63 @@ cmd_status() {
 
 cmd_reset() {
   [ -f "$ORIGINALS" ] || { echo "Zerion: no originals snapshot at $ORIGINALS"; exit 1; }
-  originals_lines | while IFS= read -r kv; do
+  local failed=0 kv name value
+  # originals_lines reads $ORIGINALS via a pipe; materialize it so the loop
+  # runs in this shell (POSIX sh has no process substitution) and `failed`
+  # survives the loop.
+  local tmp
+  tmp=$(mktemp 2>/dev/null) || tmp="$DATA_DIR/.originals.tmp"
+  originals_lines > "$tmp" || { rm -f "$tmp"; echo "Zerion: cannot read $ORIGINALS" >&2; return 1; }
+  while IFS= read -r kv; do
     [ -z "$kv" ] && continue
     name=${kv%%=*}
     value=${kv#*=}
     value=$(json_unescape "$value")
     if [ -z "$value" ]; then
-      del_prop "$name"
-      echo "Zerion: reset $name -> (unset)"
+      if del_prop "$name"; then
+        echo "Zerion: reset $name -> (unset)"
+      else
+        echo "Zerion: FAILED to reset $name -> (unset)" >&2
+        failed=1
+      fi
     else
-      set_prop "$name" "$value"
-      echo "Zerion: reset $name -> $value"
+      if set_prop "$name" "$value"; then
+        echo "Zerion: reset $name -> $value"
+      else
+        echo "Zerion: FAILED to reset $name -> $value" >&2
+        failed=1
+      fi
     fi
-  done
+  done < "$tmp"
+  rm -f "$tmp"
   refresh_state reset
+  if [ "$failed" -eq 1 ]; then
+    echo "Zerion: some properties could not be restored" >&2
+    return 1
+  fi
   echo "Zerion: done. Values apply to future dexopt runs; reboot for full effect."
 }
 
 cmd_apply() {
+  [ -f "$EXPECTED" ] || { echo "Zerion: expected.props missing at $EXPECTED" >&2; return 1; }
+  local failed=0 name value
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     case "$line" in \#*) continue ;; esac
     name=${line%%=*}
     value=${line#*=}
-    set_prop "$name" "$value"
-    echo "Zerion: apply $name=$value"
+    if set_prop "$name" "$value"; then
+      echo "Zerion: apply $name=$value"
+    else
+      echo "Zerion: FAILED to apply $name=$value" >&2
+      failed=1
+    fi
   done < "$EXPECTED"
   refresh_state apply
+  if [ "$failed" -eq 1 ]; then
+    echo "Zerion: some properties could not be applied" >&2
+    return 1
+  fi
   echo "Zerion: done. Values apply to future dexopt runs; reboot for full effect."
 }
 

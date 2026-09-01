@@ -1,6 +1,10 @@
 # Build artifacts
 dist/
 
+# Local verification artifacts (Playwright MCP snapshots, screenshots)
+.playwright-mcp/
+*.png
+
 # Editors / OS
 .vscode/
 .idea/

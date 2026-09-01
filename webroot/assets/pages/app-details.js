@@ -1,0 +1,180 @@
+// App Details — the second designed page.
+//
+// Compile state diagnosis for one app: status, compiler filter, reason,
+// primary ABI + location, artifact presence/sizes, secondary dex files, and
+// explicit dexopt actions with full confirm -> running -> result feedback.
+
+import { icon } from '../core/icons.js';
+import { escapeHtml, formatBytes, reasonLabel, reasonTech, compilerFilterLabel, isaLabel } from '../core/format.js';
+import { statusOf } from '../core/state.js';
+import {
+  collectDexoptApp, collectArtifacts, artifactHealth, primaryStatus,
+  appHealth, buildAppMeta, appLabel,
+} from '../core/data.js';
+import { runAction, shellAction } from '../core/actions.js';
+import { section, card } from '../components/section.js';
+import { infoRow, wireRawToggles } from '../components/info-row.js';
+import { loadingState, errorState, wireErrorState } from '../components/state-view.js';
+
+export async function mount(root, packageName) {
+  root.innerHTML = loadingState('正在读取应用编译状态…');
+  let pkg;
+  try {
+    pkg = await collectDexoptApp(packageName);
+    if (!pkg) {
+      root.innerHTML = errorState({
+        title: '未找到该应用',
+        detail: `dumpsys package dexopt 未返回 ${packageName} 的编译状态。应用可能已卸载，或当前 Android 版本不支持该查询。`,
+      });
+      return;
+    }
+    const primary = primaryStatus(pkg);
+    const artifacts = primary
+      ? await collectArtifacts(primary.location || pkg.dexFiles.find((d) => d.isPrimary).path, primary.isa)
+      : null;
+    const meta = buildAppMeta([packageName]);
+    render(root, { pkg, primary, artifacts, meta });
+  } catch (err) {
+    root.innerHTML = errorState({
+      title: '无法读取编译状态',
+      detail: err.message || String(err),
+      raw: err.stderr || err.stdout || '',
+      onRetry: () => mount(root, packageName),
+    });
+    wireErrorState(root, { onRetry: () => mount(root, packageName) });
+  }
+}
+
+export function unmount() { /* nothing to clean up */ }
+
+function render(root, { pkg, primary, artifacts, meta }) {
+  const label = appLabel(meta, pkg.packageName);
+  const health = appHealth(pkg);
+  const st = statusOf(health);
+  const filter = primary ? compilerFilterLabel(primary.compilerFilter) : null;
+  const reason = primary ? primary.reason : '';
+
+  const stateRows = primary ? [
+    infoRow({ label: '编译策略', value: filter.human, tech: filter.tech }),
+    infoRow({ label: '编译原因', value: reasonLabel(reason), tech: reasonTech(reason) }),
+    infoRow({ label: 'ABI', value: isaLabel(primary.isa), tech: primary.isa }),
+    primary.location ? infoRow({ label: '位置', value: primary.location }) : '',
+  ].join('') : '<div class="z-on-surface-variant">没有可用的编译状态数据。</div>';
+
+  const artifactRows = artifacts && artifacts.files.length
+    ? artifacts.files.map((f) => {
+        const size = f.size != null ? formatBytes(Math.ceil(f.size / 1024)) : '未知';
+        return infoRow({ label: f.name, value: size, tech: f.size != null ? `${f.size.toLocaleString('zh-CN')} B` : '' });
+      }).join('')
+    : '<div class="z-on-surface-variant">未读取到产物文件（可能没有 OAT 目录，或已从 APK 直接运行）。</div>';
+
+  const artifactStatus = artifacts ? artifactHealth(artifacts) : 'unknown';
+
+  const secondaryRows = pkg.dexFiles.filter((d) => d.secondary).map((d) => {
+    const sts = d.statuses.map((s) => {
+      const f = compilerFilterLabel(s.compilerFilter);
+      return `${isaLabel(s.isa)} · ${f.human}`;
+    }).join('<br>');
+    return infoRow({
+      label: d.path.split('/').pop() || d.path,
+      value: d.removed ? '已移除' : (d.isPublic ? '公共' : '存在'),
+      tech: sts,
+      raw: [d.path, d.classLoaderContexts && d.classLoaderContexts.length ? 'class loader context: ' + d.classLoaderContexts.join('; ') : ''].filter(Boolean).join('\n'),
+    });
+  }).join('');
+
+  const rawDump = renderRawDump(pkg);
+
+  root.innerHTML = `
+    <div class="z-state-row">
+      <span class="z-app-avatar">${escapeHtml((label || '?').charAt(0).toUpperCase())}</span>
+      <div>
+        <div class="z-title-medium">${escapeHtml(label)}</div>
+        <div class="z-body-small z-on-surface-variant">${escapeHtml(pkg.packageName)}</div>
+      </div>
+      <span class="z-status z-status--${st.key}" style="margin-left:auto;">${icon(st.icon, 15)}${escapeHtml(st.label)}</span>
+    </div>
+
+    ${section({ title: '编译状态', body: card({ body: stateRows }) })}
+
+    ${section({ title: '编译产物', body: card({
+      body: `
+        <div class="z-info-row"><div class="z-info-label">产物完整性</div><div class="z-info-value">${artifactStatusText(artifactStatus)}</div></div>
+        ${artifactRows}`,
+    }) })}
+
+    ${pkg.dexFiles.some((d) => d.secondary)
+      ? section({ title: '副 DEX', body: card({ body: secondaryRows }) })
+      : ''}
+
+    ${section({ title: '操作', body: card({ body: `
+      <div class="z-actions">
+        <md-button color="tonal" data-act="recompile">${icon('refresh', 18)} 重新编译（speed-profile）</md-button>
+        <md-button color="outlined" data-act="reset-compile">${icon('restart_alt', 18)} 重置编译状态</md-button>
+      </div>
+      <div class="z-body-small z-on-surface-variant" style="padding-top:8px;">重新编译使用系统默认的 speed-profile 策略；重置后系统会按当前属性重新决定编译方式。操作可能需要数分钟。</div>` }) })}
+
+    ${section({ title: '原始输出', body: card({ body: rawDump }) })}
+  `;
+
+  wireRawToggles(root);
+  wireActions(root, pkg.packageName);
+}
+
+function artifactStatusText(health) {
+  switch (health) {
+    case 'healthy': return '<span class="z-status z-status--healthy">产物完整</span>';
+    case 'warning': return '<span class="z-status z-status--warning">产物不完整</span>';
+    default: return '<span class="z-status z-status--unknown">无法确认</span>';
+  }
+}
+
+function renderRawDump(pkg) {
+  const lines = [`[${pkg.packageName}]`];
+  for (const d of pkg.dexFiles) {
+    lines.push(`  path: ${d.path}`);
+    for (const s of d.statuses) {
+      lines.push(`    ${s.isa}: [status=${s.compilerFilter}] [reason=${s.reason}]${s.primaryAbi ? ' [primary-abi]' : ''}`);
+      if (s.location) lines.push(`      [location is ${s.location}]`);
+    }
+    if (d.classLoaderContexts) {
+      for (const c of d.classLoaderContexts) lines.push(`      class loader context: ${c}`);
+    }
+  }
+  return `
+    <button type="button" class="z-raw-toggle" data-raw-toggle aria-expanded="false">${icon('expand_more', 16)}<span>查看 dumpsys 原始输出</span></button>
+    <pre class="z-raw" data-raw hidden>${escapeHtml(lines.join('\n'))}</pre>`;
+}
+
+function wireActions(root, packageName) {
+  const recompile = root.querySelector('[data-act="recompile"]');
+  if (recompile) recompile.addEventListener('click', () => {
+    runAction({
+      title: '重新编译',
+      description: `使用系统默认 speed-profile 策略重新编译 ${packageName}。编译期间应用可能变慢，完成后立即生效。`,
+      confirmLabel: '开始编译',
+      risk: 'normal',
+      runningText: '正在编译（可能需要几分钟）…',
+      successMessage: '重新编译完成',
+      failureTitle: '编译失败',
+      execute: shellAction(`cmd package compile -m speed-profile -f ${packageName}`),
+    }).then((r) => { if (r.ok) refresh(root, packageName); });
+  });
+  const reset = root.querySelector('[data-act="reset-compile"]');
+  if (reset) reset.addEventListener('click', () => {
+    runAction({
+      title: '重置编译状态',
+      description: `清除 ${packageName} 当前编译状态，系统将按当前属性重新决定编译方式。已生成的产物会被失效并可能重新编译。`,
+      confirmLabel: '重置',
+      risk: 'danger',
+      runningText: '正在重置…',
+      successMessage: '已重置编译状态',
+      failureTitle: '重置失败',
+      execute: shellAction(`cmd package compile --reset ${packageName}`),
+    }).then((r) => { if (r.ok) refresh(root, packageName); });
+  });
+}
+
+async function refresh(root, packageName) {
+  await mount(root, packageName);
+}
