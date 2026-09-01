@@ -142,7 +142,8 @@ function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta,
     }) })}
 
     ${pkg.dexFiles.some((d) => d.secondary)
-      ? section({ title: '副 DEX', body: card({ body: secondaryRows }) })
+      ? section({ title: '副 DEX', body: card({ body: secondaryRows + `
+          <div class="z-body-small z-on-surface-variant" style="padding:8px 4px 0;">应用运行时额外加载的 DEX 文件（插件 / 热更新 / 动态加载代码），与主 APK 分开编译。class loader context（CLC）记录该 DEX 由哪些类加载器加载；加载方式变化时，已编译产物可能失效并被重新编译。</div>` }) })
       : ''}
 
     ${appEventsRows ? section({ title: '操作记录', body: card({ body: appEventsRows }) }) : ''}
