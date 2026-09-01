@@ -9,8 +9,8 @@ import { escapeHtml, formatBytes, formatDate, formatRelative, reasonLabel, reaso
 import { statusOf } from '../core/state.js';
 import {
   collectDexoptApp, collectArtifacts, artifactHealth, primaryStatus,
-  appHealth, buildAppMeta, appLabel, collectProfile, collectOatArtifactMeta,
-  collectArtifactAge,
+  appHealth, buildAppMeta, appLabel, collectProfile, collectPrimaryOatEvidence,
+  collectArtifactAge, oatPathForIsa,
 } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card } from '../components/section.js';
@@ -30,15 +30,18 @@ export async function mount(root, packageName) {
       return;
     }
     const primary = primaryStatus(pkg);
-    const artifacts = primary
-      ? await collectArtifacts(primary.location || pkg.dexFiles.find((d) => d.isPrimary).path, primary.isa)
+    const primaryDex = pkg.dexFiles.find((d) => d.isPrimary);
+    // collectArtifacts takes the dex (APK) path, never the debug-only
+    // `[location is ...]` string (see android-research/dumpsys-dexopt-format.md).
+    const artifacts = primary && primaryDex
+      ? await collectArtifacts(primaryDex.path, primary.isa)
       : null;
     const profile = await collectProfile(packageName);
-    const oatMeta = primary ? await collectOatArtifactMeta(artifacts, primary) : null;
-    const odexPath = primary && (primary.location || (artifacts && artifacts.oatDir ? artifacts.oatDir + 'base.odex' : ''));
+    const oatMetaAll = primary ? await collectPrimaryOatEvidence(pkg) : [];
+    const odexPath = primary && primaryDex ? oatPathForIsa(primaryDex.path, primary.isa) : null;
     const age = odexPath ? await collectArtifactAge(odexPath) : null;
     const meta = buildAppMeta([packageName]);
-    render(root, { pkg, primary, artifacts, oatMeta, age, profile, meta });
+    render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取编译状态',
@@ -52,7 +55,7 @@ export async function mount(root, packageName) {
 
 export function unmount() { /* nothing to clean up */ }
 
-function render(root, { pkg, primary, artifacts, oatMeta, age, profile, meta }) {
+function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta }) {
   const label = appLabel(meta, pkg.packageName);
   const health = appHealth(pkg);
   const st = statusOf(health);
@@ -122,7 +125,7 @@ function render(root, { pkg, primary, artifacts, oatMeta, age, profile, meta }) 
       body: `
         <div class="z-info-row"><div class="z-info-label">产物完整性</div><div class="z-info-value">${artifactStatusText(artifactStatus)}</div></div>
         ${ageRow(age)}
-        ${oatMetaRows(oatMeta, primary)}
+        ${oatMetaRowsAll(oatMetaAll, pkg)}
         ${artifactRows}`,
     }) })}
 
@@ -179,28 +182,62 @@ function ageRow(age) {
   return `<div class="z-info-row"><div class="z-info-label">最近编译</div><div class="z-info-value">${escapeHtml(formatRelative(age.epoch))}<span class="z-tech">OAT 文件修改时间 · ${escapeHtml(formatDate(age.epoch))}</span></div></div>`;
 }
 
-function oatMetaRows(meta, primary) {
-  if (!meta) return '';
-  if (meta.kind === 'unreadable') {
-    return `
-      <div class="z-info-row"><div class="z-info-label">产物实际编译</div><div class="z-info-value">无法确认<span class="z-tech">${escapeHtml(meta.error || '读取失败')}</span></div></div>`;
+// Per-ISA artifact-level evidence: one compact row per ISA showing the actual
+// compiler filter / reason dex2oat wrote into that ISA's OAT header, plus a
+// consistency chip against that ISA's system record.  All-ISA raw details stay
+// behind one expandable toggle.
+function oatMetaRowsAll(metas, pkg) {
+  if (!metas || !metas.length) return '';
+  const primary = pkg.dexFiles.find((d) => d.isPrimary);
+  const oat = metas.filter((m) => m.kind === 'oat');
+  const unreadable = metas.filter((m) => m.kind === 'unreadable');
+  if (!oat.length) {
+    const detail = unreadable.map((m) => `${isaLabel(m.isa)}：${m.error || '读取失败'}`).join('；');
+    return `<div class="z-info-row"><div class="z-info-label">产物实际编译</div><div class="z-info-value">无法确认<span class="z-tech">${escapeHtml(detail)}</span></div></div>`;
   }
-  const filter = compilerFilterLabel(meta.filter);
-  const tech = `OAT v${escapeHtml(meta.version || '?')}${meta.android ? ` · Android ${meta.android}` : ''}${meta.isa ? ` · ${isaLabel(meta.isa)}` : ''}`;
-  const raw = [
-    `compiler-filter=${meta.filter || ''}`,
-    `compilation-reason=${meta.reason || ''}`,
-    meta.warnings && meta.warnings.length ? 'warnings:\n' + meta.warnings.join('\n') : '',
-  ].filter(Boolean).join('\n');
-  const statusRow = meta.status === 'ok' ? '' : `
-    <div class="z-info-row"><div class="z-info-label">解析状态</div><div class="z-info-value">${oatStatusText(meta.status)}</div></div>`;
+  const rows = oat.map((meta) => {
+    const st = primary && primary.statuses.find((s) => s.isa === meta.isa);
+    const filter = compilerFilterLabel(meta.filter);
+    const chip = oatConsistencyChip(st, meta);
+    const tech = [
+      st && st.compilerFilter ? `系统记录 ${st.compilerFilter}` : '',
+      meta.filter ? `产物 ${meta.filter}` : '',
+      meta.version ? `OAT v${meta.version}` : '',
+      meta.android ? `Android ${meta.android}` : '',
+      meta.isaArt ? isaLabel(meta.isaArt) : '',
+    ].filter(Boolean).join(' · ');
+    return `<div class="z-info-row">
+      <div class="z-info-label">实际编译 · ${isaLabel(meta.isa)}</div>
+      <div class="z-info-value"><div>${filter.human} · ${reasonLabel(meta.reason)} ${chip}</div><span class="z-tech">${escapeHtml(tech)}</span></div>
+    </div>`;
+  }).join('');
+  const statusRows = oat.filter((m) => m.status !== 'ok').map((m) => `
+    <div class="z-info-row"><div class="z-info-label">解析状态 · ${isaLabel(m.isa)}</div><div class="z-info-value">${oatStatusText(m.status)}</div></div>`).join('');
+  const unreadableRows = unreadable.map((m) => `
+    <div class="z-info-row"><div class="z-info-label">实际编译 · ${isaLabel(m.isa)}</div><div class="z-info-value">无法确认<span class="z-tech">${escapeHtml(m.error || '读取失败')}</span></div></div>`).join('');
+  const raw = oat.map((m) => [
+    `== ${isaLabel(m.isa)} (OAT v${m.version || '?'}${m.android ? `, Android ${m.android}` : ''}) ==`,
+    `compiler-filter=${m.filter || ''}`,
+    `compilation-reason=${m.reason || ''}`,
+    m.warnings && m.warnings.length ? 'warnings:\n' + m.warnings.join('\n') : '',
+  ].filter(Boolean).join('\n')).join('\n\n');
   return `
-    ${statusRow}
-    <div class="z-info-row"><div class="z-info-label">实际编译策略</div><div class="z-info-value">${filter.human}<span class="z-tech">${filter.tech}</span></div></div>
-    <div class="z-info-row"><div class="z-info-label">实际编译原因</div><div class="z-info-value">${reasonLabel(meta.reason)}<span class="z-tech">${escapeHtml(meta.reason || '')}</span></div></div>
-    ${oatConsistencyRow(primary, meta)}
+    ${statusRows}
+    ${rows}
+    ${unreadableRows}
     <button type="button" class="z-raw-toggle" data-raw-toggle aria-expanded="false">${icon('expand_more', 16)}<span>OAT 头详情</span></button>
     <pre class="z-raw" data-raw hidden>${escapeHtml(raw)}</pre>`;
+}
+
+// Consistency between one ISA's system record (dumpsys) and its OAT artifact.
+function oatConsistencyChip(st, meta) {
+  const sys = st && st.compilerFilter;
+  const art = meta.filter;
+  if (!sys || !art) return '';
+  const same = sys === art;
+  return same
+    ? '<span class="z-status z-status--healthy">一致</span>'
+    : '<span class="z-status z-status--warning">不一致</span>';
 }
 
 function oatStatusText(status) {
@@ -211,22 +248,6 @@ function oatStatusText(status) {
     case 'not_oat': return '<span class="z-status z-status--unknown">不是 OAT 产物</span>';
     default: return '<span class="z-status z-status--unknown">无法确认</span>';
   }
-}
-
-function oatConsistencyRow(primary, meta) {
-  const sys = primary && primary.compilerFilter;
-  const art = meta.filter;
-  if (!sys || !art) {
-    return `<div class="z-info-row"><div class="z-info-label">与系统记录</div><div class="z-info-value">无法确认<span class="z-tech">缺少系统记录或产物元数据</span></div></div>`;
-  }
-  const same = sys === art;
-  const chip = same
-    ? '<span class="z-status z-status--healthy">一致</span>'
-    : '<span class="z-status z-status--warning">不一致</span>';
-  const tech = same
-    ? `系统记录 ${sys} · 产物 ${art}`
-    : `系统记录 ${sys}，产物 ${art}（可能因版本或时间差，需进一步确认）`;
-  return `<div class="z-info-row"><div class="z-info-label">与系统记录</div><div class="z-info-value">${chip}<span class="z-tech">${escapeHtml(tech)}</span></div></div>`;
 }
 
 function profileRows(profile) {

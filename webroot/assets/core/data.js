@@ -220,10 +220,26 @@ export function summarizeDexopt(packages) {
 
 const ARTIFACT_NAMES = ['base.odex', 'base.vdex', 'base.art', 'base.odex.crc', 'base.vdex.crc'];
 
+// Documented ART odex path derivation (AOSP runtime/oat_file_assistant.cc,
+// DexLocationToOdexFilename): <dex-dir>/oat/<isa>/<base>.odex.  Used instead of
+// the dumpsys `[location is ...]` string, which AOSP documents as debug-only
+// and not stable across versions (see android-research/dumpsys-dexopt-format.md).
+export function oatDirForIsa(dexPath, isa) {
+  if (!dexPath || !isa) return null;
+  const dir = dexPath.replace(/\/[^/]+$/, '');
+  return dir + '/oat/' + isa + '/';
+}
+
+export function oatPathForIsa(dexPath, isa) {
+  const dir = oatDirForIsa(dexPath, isa);
+  return dir ? dir + 'base.odex' : null;
+}
+
 export async function collectArtifacts(dexPath, isa) {
   if (!dexPath || !isa) return { files: [], oatDir: '', error: null };
   // /data/app/~~hash==/com.example/base.apk -> /data/app/~~hash==/com.example/oat/<isa>/
-  const oatDir = dexPath.replace(/\/[^/]+$/, '') + '/oat/' + isa + '/';
+  const oatDir = oatDirForIsa(dexPath, isa);
+  if (!oatDir) return { files: [], oatDir: '', error: null };
   try {
     const r = await execOk(`ls -l ${oatDir} 2>/dev/null; ls -l ${dexPath} 2>/dev/null`);
     const files = parseLs(r.stdout);
@@ -266,23 +282,41 @@ export async function collectOatHeader(filePath) {
   }
 }
 
-export async function collectOatArtifactMeta(artifacts, primary) {
-  const odex = artifacts && artifacts.files.find((f) => f.name === 'base.odex');
-  if (!odex) return null; // no OAT artifact for the primary dex
-  const path = (primary && primary.location) || (artifacts.oatDir + 'base.odex');
-  const { bytes, error } = await collectOatHeader(path);
-  if (!bytes) return { kind: 'unreadable', error, filter: null, reason: null, isa: null, android: null, version: null, warnings: [] };
-  const a = analyzeOatBytes(bytes);
-  return {
-    kind: 'oat',
-    status: a.status,
-    filter: a.compilerFilter,
-    reason: a.compilationReason,
-    isa: a.instructionSet,
-    android: a.android,
-    version: a.versionRaw,
-    warnings: a.warnings,
-  };
+// Per-ISA artifact evidence for the primary dex: read each ISA's own
+// oat/<isa>/base.odex header and parse the actual compiler-filter /
+// compilation-reason dex2oat wrote.  One entry per ISA, in dumpsys order.
+// The OAT path is derived from the dex (APK) path + ISA (documented
+// algorithm), never from the debug-only `[location is ...]` string.
+export async function collectPrimaryOatEvidence(pkg) {
+  const primary = pkg.dexFiles.find((d) => d.isPrimary);
+  if (!primary || !primary.statuses.length) return [];
+  const out = [];
+  for (const st of primary.statuses) {
+    const path = oatPathForIsa(primary.path, st.isa);
+    if (!path) continue;
+    const { bytes, error } = await collectOatHeader(path);
+    if (!bytes) {
+      out.push({
+        isa: st.isa, path, kind: 'unreadable', status: null, error,
+        filter: null, reason: null, isaArt: null, android: null, version: null, warnings: [],
+      });
+      continue;
+    }
+    const a = analyzeOatBytes(bytes);
+    out.push({
+      isa: st.isa,
+      path,
+      kind: 'oat',
+      status: a.status,
+      filter: a.compilerFilter,
+      reason: a.compilationReason,
+      isaArt: a.instructionSet,
+      android: a.android,
+      version: a.versionRaw,
+      warnings: a.warnings,
+    });
+  }
+  return out;
 }
 
 export function artifactHealth(artifacts, apk) {
