@@ -10,7 +10,7 @@ import { statusOf } from '../core/state.js';
 import {
   collectDexoptApp, collectArtifacts, artifactHealth, primaryStatus,
   appHealth, buildAppMeta, appLabel, collectProfile, collectPrimaryOatEvidence,
-  collectArtifactAge, collectEvents, appendEvent, oatPathForIsa,
+  collectArtifactAge, collectEvents, appendEvent, collectReasonContext, oatPathForIsa,
 } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card } from '../components/section.js';
@@ -43,7 +43,8 @@ export async function mount(root, packageName) {
     const meta = buildAppMeta([packageName]);
     const events = await collectEvents(50);
     const appEvents = events.filter((ev) => ev.pkg === packageName).slice(0, 10);
-    render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta, appEvents });
+    const reasonCtx = primary ? await collectReasonContext(pkg) : null;
+    render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta, appEvents, reasonCtx });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取编译状态',
@@ -57,7 +58,7 @@ export async function mount(root, packageName) {
 
 export function unmount() { /* nothing to clean up */ }
 
-function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta, appEvents }) {
+function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta, appEvents, reasonCtx }) {
   const label = appLabel(meta, pkg.packageName);
   const health = appHealth(pkg);
   const st = statusOf(health);
@@ -128,7 +129,7 @@ function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta,
     </div>
     ${humanSummary(health, filter) ? `<div class="z-app-summary z-body-medium z-on-surface-variant">${humanSummary(health, filter)}</div>` : ''}
 
-    ${section({ title: '编译状态', body: card({ body: stateRows }) })}
+    ${section({ title: '编译状态', body: card({ body: stateRows + reasonContextHtml(reasonCtx) }) })}
 
     ${section({ title: '使用情况配置', body: card({ body: profileRows(profile) }) })}
 
@@ -158,6 +159,41 @@ function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta,
 
   wireRawToggles(root);
   wireActions(root, pkg.packageName);
+}
+
+// Expandable "why this result": the dumpsys reason -> the pm.dexopt.*
+// property that governs it -> current / module-expected / install-time
+// original values.  Grounded in the host reasonmap (AOSP REASON_STRINGS).
+function reasonContextHtml(ctx) {
+  if (!ctx) return '';
+  if (!ctx.reason) return '';
+  const btn = `<button type="button" class="z-raw-toggle" data-raw-toggle aria-expanded="false">${icon('help_outline', 16)}<span>为什么是这个结果</span></button>`;
+  if (ctx.property) {
+    const current = ctx.current || '';
+    const expected = ctx.expected || '';
+    const original = ctx.original || '';
+    const chip = current && current === expected
+      ? '<span class="z-status z-status--healthy">一致</span>'
+      : (current && current !== expected
+          ? '<span class="z-status z-status--warning">不一致</span>'
+          : '');
+    const currentLabel = current || '未设置（使用系统默认）';
+    const tech = [
+      expected ? `模块预期 ${expected}` : '模块未包含该属性',
+      original ? `安装时原值 ${original}` : '',
+    ].filter(Boolean).join(' · ');
+    return `${btn}
+      <div class="z-reason-context" data-raw hidden>
+        <div class="z-info-row"><div class="z-info-label">对应属性</div><div class="z-info-value">${escapeHtml(ctx.property)}<span class="z-tech">决定 ${escapeHtml(ctx.reason)} 编译策略的系统属性</span></div></div>
+        <div class="z-info-row"><div class="z-info-label">当前值</div><div class="z-info-value">${escapeHtml(currentLabel)} ${chip}<span class="z-tech">${escapeHtml(tech)}</span></div></div>
+        <div class="z-body-small z-on-surface-variant" style="padding:8px 4px 0;">dex2oat 按该属性决定此原因的编译策略；实际结果还可能受使用情况配置（profile）与降级策略影响。</div>
+      </div>`;
+  }
+  return `${btn}
+    <div class="z-reason-context" data-raw hidden>
+      <div class="z-info-row"><div class="z-info-label">对应属性</div><div class="z-info-value">无${ctx.cmdline ? '<span class="z-tech">命令行指定</span>' : ''}</div></div>
+      <div class="z-body-small z-on-surface-variant" style="padding:8px 4px 0;">${escapeHtml(ctx.note || '无法确认该原因对应的系统属性。')}</div>
+    </div>`;
 }
 
 // One plain-language sentence about what this compile state means for the

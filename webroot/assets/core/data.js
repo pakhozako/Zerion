@@ -429,6 +429,99 @@ export async function collectRecentlyCompiled() {
 }
 
 // ---------------------------------------------------------------------------
+// Compilation-reason context ("why this result")
+//
+// Maps a dumpsys compilation reason to the pm.dexopt.* property that governs
+// it, version-aware.  Port of host/zerion_host/reasonmap.py (reason_map.json,
+// SOURCE_VERIFIED against PMS PackageManagerServiceCompilerMapping
+// REASON_STRINGS and ART Service ReasonMapping).  "cmdline" has no property:
+// the filter came from pm compile / an explicit dex2oat flag.  Reasons whose
+// version range excludes the current Android map to nothing (shown honestly
+// instead of guessed).
+// ---------------------------------------------------------------------------
+
+const REASON_PROPERTIES = {
+  'first-boot': { property: 'pm.dexopt.first-boot', ranges: [[9, null]] },
+  boot: { property: 'pm.dexopt.boot', ranges: [[9, 11]] },
+  'boot-after-ota': { property: 'pm.dexopt.boot-after-ota', ranges: [[12, null]] },
+  'boot-after-mainline-update': { property: 'pm.dexopt.boot-after-mainline-update', ranges: [[14, null]] },
+  'post-boot': { property: 'pm.dexopt.post-boot', ranges: [[12, 13]] },
+  install: { property: 'pm.dexopt.install', ranges: [[9, null]] },
+  'install-fast': { property: 'pm.dexopt.install-fast', ranges: [[12, null]] },
+  'install-bulk': { property: 'pm.dexopt.install-bulk', ranges: [[12, null]] },
+  'install-bulk-secondary': { property: 'pm.dexopt.install-bulk-secondary', ranges: [[12, null]] },
+  'install-bulk-downgraded': { property: 'pm.dexopt.install-bulk-downgraded', ranges: [[12, null]] },
+  'install-bulk-secondary-downgraded': { property: 'pm.dexopt.install-bulk-secondary-downgraded', ranges: [[12, null]] },
+  'bg-dexopt': { property: 'pm.dexopt.bg-dexopt', ranges: [[9, null]] },
+  'ab-ota': { property: 'pm.dexopt.ab-ota', ranges: [[9, 13], [15, null]] },
+  inactive: { property: 'pm.dexopt.inactive', ranges: [[9, null]] },
+  shared: { property: 'pm.dexopt.shared', ranges: [[9, null]] },
+};
+const CMDLINE_REASONS = new Set(['cmdline']);
+
+function inRanges(android, ranges) {
+  return ranges.some(([lo, hi]) => android >= lo && (hi === null || android <= hi));
+}
+
+function rangeText(ranges) {
+  return ranges.map(([lo, hi]) => (hi === null ? `Android ${lo} 及以上` : (lo === hi ? `Android ${lo}` : `Android ${lo}–${hi}`))).join(' / ');
+}
+
+async function readExpectedProp(property) {
+  try {
+    const r = await execOk('cat /data/adb/modules/zerion/expected.props 2>/dev/null');
+    for (const line of r.stdout.split('\n')) {
+      const i = line.indexOf('=');
+      if (i > 0 && line.slice(0, i).trim() === property) return line.slice(i + 1).trim();
+    }
+    return null; // property not in the module's expected set
+  } catch {
+    return null;
+  }
+}
+
+async function readOriginalProp(property) {
+  try {
+    const r = await execOk('cat /data/adb/zerion/originals.json 2>/dev/null');
+    const obj = JSON.parse(r.stdout);
+    return typeof obj[property] === 'string' ? obj[property] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Structured "why this result" context for the primary dex's primary ABI.
+// Every unconfirmable branch degrades to an explicit note, never a guess.
+export async function collectReasonContext(pkg) {
+  const primary = pkg.dexFiles.find((d) => d.isPrimary);
+  const st = primary && (primary.statuses.find((x) => x.primaryAbi) || primary.statuses[0]);
+  const reason = (st && st.reason) || '';
+  const base = { reason, filter: (st && st.compilerFilter) || null };
+  if (!reason) return { ...base, property: null, note: '没有可用的编译原因。' };
+  const rel = await getprop('ro.build.version.release');
+  const android = parseInt(rel, 10);
+  if (!Number.isFinite(android)) return { ...base, android: null, property: null, note: '无法确认 Android 版本，无法映射对应属性。' };
+  base.android = android;
+  if (CMDLINE_REASONS.has(reason)) {
+    return { ...base, property: null, cmdline: true, note: '该应用由命令行指定编译（pm compile / dex2oat 参数），没有对应的 pm.dexopt.* 属性。' };
+  }
+  const rec = REASON_PROPERTIES[reason];
+  if (!rec) {
+    return { ...base, property: null, note: `该编译原因没有已确认的系统属性（${reason}）。` };
+  }
+  if (!inRanges(android, rec.ranges)) {
+    return { ...base, property: null, note: `该原因在 Android ${android} 没有对应属性（仅存在于 ${rangeText(rec.ranges)}）。` };
+  }
+  const property = rec.property;
+  const [current, expected, original] = await Promise.all([
+    getprop(property),
+    readExpectedProp(property),
+    readOriginalProp(property),
+  ]);
+  return { ...base, android, property, current, expected, original };
+}
+
+// ---------------------------------------------------------------------------
 // On-device event log (events.jsonl)
 //
 // Events are appended through the module's shared writer
