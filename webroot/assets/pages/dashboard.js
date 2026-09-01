@@ -6,18 +6,18 @@
 
 import { icon } from '../core/icons.js';
 import { escapeHtml, formatBytes, formatBytesExact, formatDate, sdkLabel, reasonLabel, reasonTech, compilerFilterLabel, managerLabel } from '../core/format.js';
-import { statusOf, worstStatus, statusBadge } from '../core/state.js';
+import { statusOf } from '../core/state.js';
 import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, buildAppMeta, appLabel, primaryStatus, appHealth } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card, emptySection } from '../components/section.js';
 import { infoRow, wireRawToggles } from '../components/info-row.js';
 import { appRow } from '../components/app-row.js';
-import { loadingState, errorState, wireErrorState } from '../components/state-view.js';
+import { skeletonState, errorState, wireErrorState } from '../components/state-view.js';
 
 const MODULE_DIR = '/data/adb/modules/zerion';
 
 export async function mount(root) {
-  root.innerHTML = loadingState('正在读取设备状态…');
+  root.innerHTML = skeletonState('dashboard');
   try {
     const [device, moduleState, packages, oat] = await Promise.all([
       collectDeviceInfo(),
@@ -52,23 +52,23 @@ function render(root, { device, moduleState, summary, oat, meta }) {
   const status = overallStatus(summary, device);
   const st = statusOf(status);
 
-  const deviceRows = [
-    ['型号', device.model || '', device.brand || ''],
-    ['Android 版本', sdkLabel(device.sdk), `SDK ${device.sdk || '?'} · ${device.android || ''}`],
-    ['安全补丁', device.securityPatch || ''],
-    ['Root 管理器', moduleState.stateFile && moduleState.stateFile.manager ? managerLabel(moduleState.stateFile.manager) : 'KernelSU / APatch'],
-  ].filter((r) => r[1] !== '');
-
   const state = moduleState.stateFile || {};
-  const moduleRows = [
+  // Settings-style single "系统" group: module facts + device facts + storage,
+  // instead of three separate cards (and a duplicated OAT metric).
+  const systemRows = [
     ['模块版本', moduleState.info && moduleState.info.version ? moduleState.info.version : '未知'],
     ['目标 Android', state.target_android ? `Android ${state.target_android}` : ''],
     ['最近操作', state.last_action ? `${actionLabel(state.last_action)} · ${formatDate(state.last_action_at)}` : '暂无'],
+    ['设备型号', device.model || '', device.brand || ''],
+    ['Android 版本', sdkLabel(device.sdk), `SDK ${device.sdk || '?'} · ${device.android || ''}`],
+    ['安全补丁', device.securityPatch || ''],
+    ['Root 管理器', state.manager ? managerLabel(state.manager) : 'KernelSU / APatch'],
+    ['OAT 体积', oat.oatKb != null ? formatBytes(oat.oatKb) : '未知', oat.oatKb != null ? formatBytesExact(oat.oatKb) : ''],
   ].filter((r) => r[1] !== '');
 
-  const filterChips = summary.byFilter.slice(0, 6).map(([filter, count]) => {
+  const filterRows = summary.byFilter.map(([filter, count]) => {
     const f = compilerFilterLabel(filter);
-    return `<span class="z-metric"><div class="z-metric-value">${count}</div><div class="z-metric-label">${escapeHtml(f.human)}</div></span>`;
+    return `<div class="z-summary-row"><div class="z-summary-label">${escapeHtml(f.human)}</div><div class="z-summary-count">${count} 个</div></div>`;
   }).join('');
 
   const attentionHtml = summary.attentionApps.length
@@ -82,7 +82,7 @@ function render(root, { device, moduleState, summary, oat, meta }) {
           href: `#/apps/${encodeURIComponent(pkg.packageName)}`,
         });
       }).join('')}</div>
-       ${summary.attentionApps.length > 8 ? `<div class="z-card-footer"><a class="z-section-action" href="#/apps">查看全部 ${summary.attentionApps.length} 个应用</a></div>` : ''}`
+       ${summary.attentionApps.length > 8 ? `<div class="z-section-action" style="padding:8px 4px 0;"><a href="#/apps">查看全部 ${summary.attentionApps.length} 个应用</a></div>` : ''}`
     : emptySection('check_circle', '没有需要关注的应用', '已编译应用的状态均正常。');
 
   root.innerHTML = `
@@ -99,7 +99,7 @@ function render(root, { device, moduleState, summary, oat, meta }) {
         <div class="z-info-row"><div class="z-info-label">需关注应用</div><div class="z-info-value"><a href="#/apps">${summary.attention} 个</a> ${summary.attention ? `<span class="z-tech">可能是 verify / extract / run-from-apk 等未充分编译状态</span>` : ''}</div></div>`,
     }) })}
 
-    ${section({ title: '模块', body: card({ body: moduleRows.map(([l, v, t]) => infoRow({ label: l, value: v, tech: t })).join('') }) })}
+    ${section({ title: '需要关注', body: attentionHtml })}
 
     ${section({
       title: '操作',
@@ -113,13 +113,12 @@ function render(root, { device, moduleState, summary, oat, meta }) {
       }),
     })}
 
-    ${section({ title: '设备', body: card({ body: deviceRows.map(([l, v, t]) => infoRow({ label: l, value: v, tech: t })).join('') }) })}
+    ${section({ title: '编译概览', body: card({
+      body: filterRows || '<div class="z-on-surface-variant">暂无数据</div>',
+      footer: summary.total ? `<a class="z-section-action" href="#/apps">查看全部 ${summary.total} 个应用</a>` : '',
+    }) })}
 
-    ${section({ title: '编译概览', body: card({ body: `<div class="z-metrics">${filterChips || '<div class="z-on-surface-variant">暂无数据</div>'}</div>` }) })}
-
-    ${section({ title: '需要关注', body: card({ body: attentionHtml }) })}
-
-    ${section({ title: '存储', body: card({ body: infoRow({ label: 'OAT 产物', value: oat.oatKb != null ? formatBytes(oat.oatKb) : '未知', tech: oat.oatKb != null ? formatBytesExact(oat.oatKb) : '' }) }) })}
+    ${section({ title: '系统', body: card({ body: systemRows.map(([l, v, t]) => infoRow({ label: l, value: v, tech: t })).join('') }) })}
   `;
 
   wireRawToggles(root);

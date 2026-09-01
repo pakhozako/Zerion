@@ -436,6 +436,74 @@ md-dialog {
 /* Chips */
 .z-chip-row { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px; }
 
+/* ================= Page transition =================
+   Subtle page-level fade; reduced-motion is handled globally. */
+.z-page-enter { animation: z-page-in var(--z-duration-med) ease-out; }
+@keyframes z-page-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ================= Skeleton (layout-stable loading) =================
+   Business-level placeholder, not an M3E component: material-esm ships no
+   skeleton.  Shapes the page so content swap does not jump the layout. */
+.z-skeleton-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 4px;
+}
+.z-skeleton-page .z-metrics { padding: 4px; }
+.z-skeleton-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px;
+}
+.z-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--z-radius-sm);
+  background: var(--md-sys-color-surface-container-high);
+  animation: z-skeleton-pulse 1.4s ease-in-out infinite;
+}
+.z-skeleton--tile { height: 62px; border-radius: var(--z-radius-md); }
+.z-skeleton--title { width: 38%; height: 14px; margin-bottom: 10px; }
+.z-skeleton--row { width: 100%; height: 44px; }
+.z-skeleton--avatar { width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0; }
+.z-skeleton--text { width: 100%; height: 16px; }
+.z-skeleton--text.w50 { width: 55%; }
+.z-skeleton-details-head { display: flex; align-items: center; gap: 14px; padding: 14px 4px 4px; }
+.z-skeleton-details-titles { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+@keyframes z-skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* ================= App detail human summary ================= */
+.z-app-summary {
+  margin: 4px 4px 0;
+  max-width: 640px;
+}
+
+/* ================= Compact summary rows (label + count) ================= */
+.z-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 4px;
+  min-height: 44px;
+}
+.z-summary-row + .z-summary-row { border-top: 1px solid var(--md-sys-color-outline-variant); }
+.z-summary-label { min-width: 0; font-size: 14px; }
+.z-summary-count {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
 /* ================= Responsive ================= */
 @media (min-width: 840px) {
   :root { --z-page-padding: 24px; }

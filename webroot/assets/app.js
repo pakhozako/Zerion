@@ -33,6 +33,15 @@ const headerEl = document.getElementById('app-header');
 const mainEl = document.getElementById('app-main');
 const navEl = document.getElementById('app-nav');
 
+// Subtle page-level transition (fade + slight lift).  Reduced motion is
+// handled globally in base.css; this only re-triggers the animation once per
+// route change.
+function fadeInPage(el) {
+  el.classList.remove('z-page-enter');
+  void el.offsetWidth; // force reflow so the animation re-runs
+  el.classList.add('z-page-enter');
+}
+
 function parseHash() {
   const h = location.hash || '#/';
   if (h === '#/' || h === '#' || h === '') return { page: 'dashboard' };
@@ -108,6 +117,7 @@ function route() {
   renderHeader(r);
   renderNav(r);
   mainEl.innerHTML = '';
+  fadeInPage(mainEl);
   if (!hasBridge()) {
     mainEl.innerHTML = bridgeUnavailableState();
     return;

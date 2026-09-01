@@ -14,10 +14,10 @@ import {
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card } from '../components/section.js';
 import { infoRow, wireRawToggles } from '../components/info-row.js';
-import { loadingState, errorState, wireErrorState } from '../components/state-view.js';
+import { skeletonState, errorState, wireErrorState } from '../components/state-view.js';
 
 export async function mount(root, packageName) {
-  root.innerHTML = loadingState('正在读取应用编译状态…');
+  root.innerHTML = skeletonState('details');
   let pkg;
   try {
     pkg = await collectDexoptApp(packageName);
@@ -94,6 +94,7 @@ function render(root, { pkg, primary, artifacts, meta }) {
       </div>
       <span class="z-status z-status--${st.key}" style="margin-left:auto;">${icon(st.icon, 15)}${escapeHtml(st.label)}</span>
     </div>
+    ${humanSummary(health, filter) ? `<div class="z-app-summary z-body-medium z-on-surface-variant">${humanSummary(health, filter)}</div>` : ''}
 
     ${section({ title: '编译状态', body: card({ body: stateRows }) })}
 
@@ -119,6 +120,26 @@ function render(root, { pkg, primary, artifacts, meta }) {
 
   wireRawToggles(root);
   wireActions(root, pkg.packageName);
+}
+
+// One plain-language sentence about what this compile state means for the
+// app.  The technical filter/reason stays expandable in the 编译状态 card.
+function humanSummary(health, filter) {
+  if (health === 'unknown' || !filter) return '无法确认此应用的编译状态：缺少可用的编译数据。';
+  switch (filter.tech) {
+    case 'verify': return '此应用目前仅做了校验（verify），没有生成优化代码；首次启动可能偏慢。';
+    case 'extract': return '此应用仅提取了 DEX，未进行编译；首次启动可能偏慢。';
+    case 'quicken': return '此应用使用快速编译（quicken），只优化了部分热点代码。';
+    case 'assume-verified': return '此应用假定已校验（assume-verified），未做完整校验。';
+    case 'run-from-apk': return '此应用没有 OAT 产物，直接从 APK 运行。';
+    case 'run-from-vdex': return '此应用从 VDEX 运行，未生成完整的 OAT 产物。';
+    case 'speed-profile': return '此应用已按使用情况优化：常用代码路径已预先编译，兼顾启动速度与空间占用。';
+    case 'speed': return '此应用已全面编译（speed），启动与运行优先，占用空间较大。';
+    case 'everything': return '此应用已全量编译（everything），运行性能优先，占用空间与编译时间最大。';
+    case 'space-profile': return '此应用以节省空间为目标，只编译配置文件命中的代码。';
+    case 'space': return '此应用以节省空间为目标，只做最小编译。';
+    default: return '';
+  }
 }
 
 function artifactStatusText(health) {
