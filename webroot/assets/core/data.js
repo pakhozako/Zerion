@@ -284,6 +284,33 @@ export async function collectOatStorage() {
 }
 
 // ---------------------------------------------------------------------------
+// Runtime profiles (current-user usage profiles)
+//
+// AOSP: PrimaryDexUtils.getCurProfiles() builds one profile path per installed
+// user via AidlUtils.buildProfilePathForPrimaryCur(userId, packageName,
+// "primary") -> /data/misc/profiles/cur/<userId>/<pkg>/primary.prof; artd
+// resolves the ProfilePath to the filesystem.  JIT writes these continuously
+// and dexopt (speed-profile) merges them to decide what to AOT-compile.
+// A missing profile is a normal state (app rarely used / JIT has not written
+// yet), not an error.
+// ---------------------------------------------------------------------------
+
+export async function collectProfile(packageName) {
+  const cmd = `for f in /data/misc/profiles/cur/*/${packageName}/primary.prof; do [ -f "$f" ] && { printf '%s ' "$f"; wc -c < "$f"; }; done`;
+  try {
+    const r = await execOk(cmd);
+    const files = [];
+    for (const line of r.stdout.split('\n')) {
+      const m = line.trim().match(/^(\S+)\s+(\d+)$/);
+      if (m) files.push({ path: m[1], size: Number(m[2]) });
+    }
+    return { files, error: null };
+  } catch (e) {
+    return { files: [], error: e.message || String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Third-party package list (for Apps list filter)
 // ---------------------------------------------------------------------------
 

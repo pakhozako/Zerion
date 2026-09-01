@@ -21,7 +21,11 @@ let state = {
 
 let listEl = null;
 
-export async function mount(root) {
+export async function mount(root, opts = {}) {
+  // Optional pre-selected filter from the URL (e.g. #/apps?filter=attention).
+  if (opts.filter && ['all', 'attention', 'user', 'system'].includes(opts.filter) && opts.filter !== state.filter) {
+    state.filter = opts.filter;
+  }
   if (!state.loaded) {
     root.innerHTML = loadingState('正在读取应用列表…');
     try {

@@ -85,10 +85,18 @@ function render(root, { device, moduleState, summary, oat, meta }) {
        ${summary.attentionApps.length > 8 ? `<div class="z-section-action" style="padding:8px 4px 0;"><a href="#/apps">查看全部 ${summary.attentionApps.length} 个应用</a></div>` : ''}`
     : emptySection('check_circle', '没有需要关注的应用', '已编译应用的状态均正常。');
 
+  const attentionTile = summary.attention > 0
+    ? `<a class="z-metric z-metric--link z-metric--alert" href="#/apps?filter=attention" aria-label="查看 ${summary.attention} 个需关注的应用">
+         <div class="z-metric-value">${summary.attention}</div><div class="z-metric-label">需关注</div>
+       </a>`
+    : `<div class="z-metric"><div class="z-metric-value">0</div><div class="z-metric-label">需关注</div></div>`;
+
   root.innerHTML = `
     <div class="z-metrics">
-      <div class="z-metric"><div class="z-metric-value">${summary.total}</div><div class="z-metric-label">应用</div></div>
-      <div class="z-metric"><div class="z-metric-value">${summary.attention}</div><div class="z-metric-label">需关注</div></div>
+      <a class="z-metric z-metric--link" href="#/apps" aria-label="查看全部 ${summary.total} 个应用">
+        <div class="z-metric-value">${summary.total}</div><div class="z-metric-label">应用</div>
+      </a>
+      ${attentionTile}
       <div class="z-metric"><div class="z-metric-value">${oat.oatKb != null ? formatBytes(oat.oatKb, 0) : '未知'}</div><div class="z-metric-label">OAT 体积</div></div>
     </div>
 

@@ -9,7 +9,7 @@ import { escapeHtml, formatBytes, reasonLabel, reasonTech, compilerFilterLabel, 
 import { statusOf } from '../core/state.js';
 import {
   collectDexoptApp, collectArtifacts, artifactHealth, primaryStatus,
-  appHealth, buildAppMeta, appLabel,
+  appHealth, buildAppMeta, appLabel, collectProfile,
 } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card } from '../components/section.js';
@@ -32,8 +32,9 @@ export async function mount(root, packageName) {
     const artifacts = primary
       ? await collectArtifacts(primary.location || pkg.dexFiles.find((d) => d.isPrimary).path, primary.isa)
       : null;
+    const profile = await collectProfile(packageName);
     const meta = buildAppMeta([packageName]);
-    render(root, { pkg, primary, artifacts, meta });
+    render(root, { pkg, primary, artifacts, profile, meta });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取编译状态',
@@ -47,7 +48,7 @@ export async function mount(root, packageName) {
 
 export function unmount() { /* nothing to clean up */ }
 
-function render(root, { pkg, primary, artifacts, meta }) {
+function render(root, { pkg, primary, artifacts, profile, meta }) {
   const label = appLabel(meta, pkg.packageName);
   const health = appHealth(pkg);
   const st = statusOf(health);
@@ -98,6 +99,8 @@ function render(root, { pkg, primary, artifacts, meta }) {
 
     ${section({ title: '编译状态', body: card({ body: stateRows }) })}
 
+    ${section({ title: '使用情况配置', body: card({ body: profileRows(profile) }) })}
+
     ${section({ title: '编译产物', body: card({
       body: `
         <div class="z-info-row"><div class="z-info-label">产物完整性</div><div class="z-info-value">${artifactStatusText(artifactStatus)}</div></div>
@@ -140,6 +143,26 @@ function humanSummary(health, filter) {
     case 'space': return '此应用以节省空间为目标，只做最小编译。';
     default: return '';
   }
+}
+
+// Runtime profile status for the current users.  A missing profile is a
+// normal state (JIT has not written usage data yet), shown as such rather
+// than as an error or "未知".
+function profileRows(profile) {
+  if (profile && profile.error) {
+    return `<div class="z-info-row"><div class="z-info-label">运行时 Profile</div><div class="z-info-value">未知<span class="z-tech">${escapeHtml(profile.error)}</span></div></div>`;
+  }
+  const files = (profile && profile.files) || [];
+  if (!files.length) {
+    return `
+      <div class="z-info-row"><div class="z-info-label">运行时 Profile</div><div class="z-info-value">尚未生成<span class="z-tech">JIT 会在使用中持续写入，供 speed-profile 编译参考</span></div></div>`;
+  }
+  return files.map((f) => infoRow({
+    label: f.path.split('/').pop() || 'primary.prof',
+    value: '存在 · ' + formatBytes(Math.ceil(f.size / 1024)),
+    tech: f.path,
+  })).join('') + `
+    <div class="z-body-small z-on-surface-variant" style="padding:8px 4px 0;">JIT 会在使用中写入使用情况配置；speed-profile 编译会参考它决定预先编译哪些代码。</div>`;
 }
 
 function artifactStatusText(health) {
@@ -197,5 +220,9 @@ function wireActions(root, packageName) {
 }
 
 async function refresh(root, packageName) {
+  const y = window.scrollY;
   await mount(root, packageName);
+  // mount() swaps in a skeleton first (page shrinks and clamps scroll), so
+  // restore the previous position after the new content is in place.
+  requestAnimationFrame(() => window.scrollTo(0, y));
 }

@@ -46,6 +46,11 @@ function parseHash() {
   const h = location.hash || '#/';
   if (h === '#/' || h === '#' || h === '') return { page: 'dashboard' };
   if (h === '#/apps') return { page: 'apps' };
+  if (h.startsWith('#/apps?')) {
+    const params = new URLSearchParams(h.replace(/^#\/apps\?/, ''));
+    const filter = params.get('filter');
+    return { page: 'apps', filter: ['all', 'attention', 'user', 'system'].includes(filter) ? filter : undefined };
+  }
   const m = h.match(/^#\/apps\/(.+)$/);
   if (m) return { page: 'app-details', packageName: decodeURIComponent(m[1]) };
   return { page: 'dashboard' };
@@ -103,7 +108,8 @@ function renderNav(route) {
     inactiveIcon.innerHTML = icon(d.iconName);
     item.append(activeIcon, inactiveIcon);
     item.addEventListener('click', () => {
-      if (parseHash().page !== d.key) location.hash = d.hash;
+      const cur = parseHash();
+      if (cur.page !== d.key || (d.key === 'apps' && cur.filter)) location.hash = d.hash;
     });
     bar.append(item);
   }
@@ -127,7 +133,7 @@ function route() {
     dashboard.mount(mainEl);
   } else if (r.page === 'apps') {
     current = apps;
-    apps.mount(mainEl);
+    apps.mount(mainEl, { filter: r.filter });
   } else {
     current = appDetails;
     appDetails.mount(mainEl, r.packageName);
