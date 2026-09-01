@@ -5,30 +5,29 @@
 // information lives in App Details / deeper pages, not here.
 
 import { icon } from '../core/icons.js';
-import { escapeHtml, formatBytes, formatBytesExact, formatDate, formatRelative, sdkLabel, reasonLabel, reasonTech, compilerFilterLabel, managerLabel } from '../core/format.js';
+import { escapeHtml, formatBytes, formatBytesExact, formatDate, formatRelative, sdkLabel, reasonLabel, reasonTech, compilerFilterLabel, managerLabel, eventTypeLabel, eventResultChip } from '../core/format.js';
 import { statusOf } from '../core/state.js';
-import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, collectRecentlyCompiled, buildAppMeta, appLabel, primaryStatus, appHealth } from '../core/data.js';
+import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, collectRecentlyCompiled, collectEvents, appendEvent, MODULE_DIR, buildAppMeta, appLabel, primaryStatus, appHealth } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card, emptySection } from '../components/section.js';
 import { infoRow, wireRawToggles } from '../components/info-row.js';
 import { appRow } from '../components/app-row.js';
 import { skeletonState, errorState, wireErrorState } from '../components/state-view.js';
 
-const MODULE_DIR = '/data/adb/modules/zerion';
-
 export async function mount(root) {
   root.innerHTML = skeletonState('dashboard');
   try {
-    const [device, moduleState, packages, oat, recent] = await Promise.all([
+    const [device, moduleState, packages, oat, recent, events] = await Promise.all([
       collectDeviceInfo(),
       collectModuleState(),
       collectDexoptAll(),
       collectOatStorage(),
       collectRecentlyCompiled(),
+      collectEvents(10),
     ]);
     const summary = summarizeDexopt(packages);
     const meta = buildAppMeta(packages.map((p) => p.packageName));
-    render(root, { device, moduleState, summary, oat, recent, meta, packages });
+    render(root, { device, moduleState, summary, oat, recent, events, meta, packages });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取设备状态',
@@ -49,7 +48,7 @@ function overallStatus(summary, device) {
   return 'healthy';
 }
 
-function render(root, { device, moduleState, summary, oat, recent, meta, packages }) {
+function render(root, { device, moduleState, summary, oat, recent, events, meta, packages }) {
   const status = overallStatus(summary, device);
   const st = statusOf(status);
 
@@ -103,6 +102,18 @@ function render(root, { device, moduleState, summary, oat, recent, meta, package
        <div class="z-body-small z-on-surface-variant" style="padding:6px 4px 0;">按 OAT 产物文件的修改时间排序（dex2oat 每次写入时更新）。</div>`
     : emptySection('schedule', '暂无可用的产物时间', '无法读取 OAT 产物时间（可能需要 root 权限或当前系统不支持该查询）。');
 
+  const eventsHtml = events && events.length
+    ? `<div class="z-list">${events.map((ev) => `
+        <div class="z-info-row">
+          <div class="z-info-label">${escapeHtml(eventTypeLabel(ev.type))}${ev.pkg ? ` · ${escapeHtml(appLabel(meta, ev.pkg))}` : ''}</div>
+          <div class="z-info-value">
+            <div>${formatRelative(ev.t)} ${eventResultChip(ev.result)}</div>
+            ${ev.detail ? `<span class="z-tech">${escapeHtml(ev.detail)}</span>` : ''}
+          </div>
+        </div>`).join('')}</div>
+       <div class="z-body-small z-on-surface-variant" style="padding:6px 4px 0;">Zerion 在设备端记录的操作历史（/data/adb/zerion/events.jsonl）。</div>`
+    : '';
+
   const attentionHtml = summary.attentionApps.length
     ? `<div class="z-list">${summary.attentionApps.slice(0, 8).map(({ pkg }) => {
         const p = primaryStatus(pkg);
@@ -155,6 +166,8 @@ function render(root, { device, moduleState, summary, oat, recent, meta, package
 
     ${section({ title: '最近编译', body: recentHtml })}
 
+    ${eventsHtml ? section({ title: '最近操作', body: eventsHtml }) : ''}
+
     ${section({ title: '编译概览', body: card({
       body: `
         <div class="z-label-medium z-on-surface-variant" style="padding:4px 4px 0;">编译策略</div>
@@ -195,6 +208,9 @@ function wireActions(root) {
       runningText: '正在写入属性…',
       successMessage: '已应用预期属性',
       execute: shellAction('sh action.sh apply', { cwd: MODULE_DIR }),
+    }).then((r) => {
+      if (!r.cancelled) appendEvent({ type: 'apply', result: r.ok ? 'ok' : 'fail', detail: r.error ? (r.error.message || String(r.error)) : '' });
+      if (r.ok) mount(root);
     });
   });
   const resetBtn = root.querySelector('[data-act="reset"]');
@@ -208,6 +224,9 @@ function wireActions(root) {
       successMessage: '已恢复原值',
       failureTitle: '恢复失败',
       execute: shellAction('sh action.sh reset', { cwd: MODULE_DIR }),
+    }).then((r) => {
+      if (!r.cancelled) appendEvent({ type: 'reset', result: r.ok ? 'ok' : 'fail', detail: r.error ? (r.error.message || String(r.error)) : '' });
+      if (r.ok) mount(root);
     });
   });
 }

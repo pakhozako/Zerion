@@ -132,3 +132,27 @@ export function isaLabel(isa) {
   };
   return map[String(isa || '')] || String(isa || '未知');
 }
+
+// On-device event log (events.jsonl) human labels.
+const EVENT_LABELS = {
+  install: '安装模块',
+  apply: '应用配置',
+  reset: '重置配置',
+  recompile: '重新编译',
+  'reset-compile': '重置编译状态',
+  update: '更新模块',
+  uninstall: '卸载模块',
+};
+
+export function eventTypeLabel(type) {
+  const t = String(type || '').trim();
+  return EVENT_LABELS[t] || (t ? `未知操作（${t}）` : '未知操作');
+}
+
+// Result chip for an event line: success / failure / unknown.
+export function eventResultChip(result) {
+  const r = String(result || '').trim();
+  if (r === 'ok') return '<span class="z-status z-status--healthy">成功</span>';
+  if (r === 'fail') return '<span class="z-status z-status--error">失败</span>';
+  return '<span class="z-status z-status--unknown">未知</span>';
+}

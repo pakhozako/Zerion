@@ -24,6 +24,7 @@
 
 DATA_DIR=${ZERION_DATA_DIR:-/data/adb/zerion}
 STATE_FILE="$DATA_DIR/state.json"
+EVENTS_FILE="$DATA_DIR/events.jsonl"
 
 # json_escape is defined by customize.sh; provide a fallback for action.sh.
 if ! command -v json_escape >/dev/null 2>&1; then
@@ -108,6 +109,29 @@ write_install_state() {  # $1 = state.info path
     printf '\n  "last_action_at": "%s"' "$(json_escape "$last_at")"
     printf '\n}\n'
   } > "$STATE_FILE" || return 1
+  return 0
+}
+
+# Append one event to $EVENTS_FILE (append-only JSONL, bounded to the last
+# MAX_EVENTS lines).  Events record what Zerion did and when: install, apply,
+# reset, recompile, reset-compile, ...  The WebUI (KSU/APatch) and action.sh
+# (Magisk) both go through this same writer so escaping/trimming stay uniform.
+# Timestamps are `date +%s` (toybox supports %s); a missing clock degrades to
+# "t":null, which the UI shows as 时间未知.
+log_event() {  # $1=type $2=pkg(optional) $3=detail(optional) $4=result(optional)
+  [ -n "$1" ] || return 0
+  local t line
+  t=$(date +%s 2>/dev/null || true)
+  line="{\"t\":${t:-null},\"type\":\"$(json_escape "$1")\""
+  [ -n "$2" ] && line="$line,\"pkg\":\"$(json_escape "$2")\""
+  [ -n "$3" ] && line="$line,\"detail\":\"$(json_escape "$3")\""
+  [ -n "$4" ] && line="$line,\"result\":\"$(json_escape "$4")\""
+  line="$line}"
+  mkdir -p "$DATA_DIR" 2>/dev/null || return 1
+  printf '%s\n' "$line" >> "$EVENTS_FILE" 2>/dev/null || return 1
+  # Bound the file: keep only the most recent MAX_EVENTS non-empty lines.
+  tail -n "${MAX_EVENTS:-200}" "$EVENTS_FILE" 2>/dev/null | grep -v '^$' > "$EVENTS_FILE.tmp" 2>/dev/null \
+    && mv "$EVENTS_FILE.tmp" "$EVENTS_FILE" 2>/dev/null
   return 0
 }
 

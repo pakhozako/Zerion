@@ -30,7 +30,10 @@ Zerion 是一个 Android Root 模块，用于管理 dexopt / ART 编译相关系
 
 ## 使用
 
-安装并重启后，在设备端 root shell 中执行：
+安装并重启后：
+
+- **KernelSU / APatch**：在模块管理器中打开 Zerion，使用内置 WebUI 查看状态、应用或恢复属性。
+- **Magisk / 任意环境**：在设备端 root shell 中执行：
 
 ```sh
 cd /data/adb/modules/zerion

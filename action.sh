@@ -6,6 +6,8 @@
 #   action.sh apply         apply expected values immediately (best-effort)
 #   action.sh collect       dump a device snapshot (props + state)
 #   action.sh collect-oat <path>  emit an OAT/VDEX header as hex
+#   action.sh log-event <type> [pkg] [detail] [result]
+#                               append one line to events.jsonl (bounded)
 #
 # Runs as a child process, so `exit` is allowed here (unlike customize.sh).
 # Every action refreshes /data/adb/zerion/state.json counters
@@ -111,6 +113,7 @@ cmd_reset() {
   done < "$tmp"
   rm -f "$tmp"
   refresh_state reset
+  log_event reset "" "" "$([ "$failed" -eq 1 ] && echo fail || echo ok)"
   if [ "$failed" -eq 1 ]; then
     echo "Zerion: some properties could not be restored" >&2
     return 1
@@ -134,6 +137,7 @@ cmd_apply() {
     fi
   done < "$EXPECTED"
   refresh_state apply
+  log_event apply "" "" "$([ "$failed" -eq 1 ] && echo fail || echo ok)"
   if [ "$failed" -eq 1 ]; then
     echo "Zerion: some properties could not be applied" >&2
     return 1
@@ -183,5 +187,6 @@ case "${1:-status}" in
   apply)       cmd_apply ;;
   collect)     cmd_collect ;;
   collect-oat) cmd_collect_oat "$2" ;;
-  *) echo "usage: $0 {status|reset|apply|collect|collect-oat <path>}"; exit 1 ;;
+  log-event)   log_event "$2" "$3" "$4" "$5" ;;
+  *) echo "usage: $0 {status|reset|apply|collect|collect-oat <path>|log-event <type> [pkg] [detail] [result]}"; exit 1 ;;
 esac

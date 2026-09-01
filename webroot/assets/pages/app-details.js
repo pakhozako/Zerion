@@ -5,12 +5,12 @@
 // explicit dexopt actions with full confirm -> running -> result feedback.
 
 import { icon } from '../core/icons.js';
-import { escapeHtml, formatBytes, formatDate, formatRelative, reasonLabel, reasonTech, compilerFilterLabel, isaLabel } from '../core/format.js';
+import { escapeHtml, formatBytes, formatDate, formatRelative, reasonLabel, reasonTech, compilerFilterLabel, isaLabel, eventTypeLabel, eventResultChip } from '../core/format.js';
 import { statusOf } from '../core/state.js';
 import {
   collectDexoptApp, collectArtifacts, artifactHealth, primaryStatus,
   appHealth, buildAppMeta, appLabel, collectProfile, collectPrimaryOatEvidence,
-  collectArtifactAge, oatPathForIsa,
+  collectArtifactAge, collectEvents, appendEvent, oatPathForIsa,
 } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card } from '../components/section.js';
@@ -41,7 +41,9 @@ export async function mount(root, packageName) {
     const odexPath = primary && primaryDex ? oatPathForIsa(primaryDex.path, primary.isa) : null;
     const age = odexPath ? await collectArtifactAge(odexPath) : null;
     const meta = buildAppMeta([packageName]);
-    render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta });
+    const events = await collectEvents(50);
+    const appEvents = events.filter((ev) => ev.pkg === packageName).slice(0, 10);
+    render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta, appEvents });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取编译状态',
@@ -55,7 +57,7 @@ export async function mount(root, packageName) {
 
 export function unmount() { /* nothing to clean up */ }
 
-function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta }) {
+function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta, appEvents }) {
   const label = appLabel(meta, pkg.packageName);
   const health = appHealth(pkg);
   const st = statusOf(health);
@@ -104,6 +106,15 @@ function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta 
     });
   }).join('');
 
+  const appEventsRows = (appEvents || []).map((ev) => `
+    <div class="z-info-row">
+      <div class="z-info-label">${escapeHtml(eventTypeLabel(ev.type))}</div>
+      <div class="z-info-value">
+        <div>${formatRelative(ev.t)} ${eventResultChip(ev.result)}</div>
+        ${ev.detail ? `<span class="z-tech">${escapeHtml(ev.detail)}</span>` : ''}
+      </div>
+    </div>`).join('');
+
   const rawDump = renderRawDump(pkg);
 
   root.innerHTML = `
@@ -132,6 +143,8 @@ function render(root, { pkg, primary, artifacts, oatMetaAll, age, profile, meta 
     ${pkg.dexFiles.some((d) => d.secondary)
       ? section({ title: '副 DEX', body: card({ body: secondaryRows }) })
       : ''}
+
+    ${appEventsRows ? section({ title: '操作记录', body: card({ body: appEventsRows }) }) : ''}
 
     ${section({ title: '操作', body: card({ body: `
       <div class="z-actions">
@@ -304,7 +317,10 @@ function wireActions(root, packageName) {
       successMessage: '重新编译完成',
       failureTitle: '编译失败',
       execute: shellAction(`cmd package compile -m speed-profile -f ${packageName}`),
-    }).then((r) => { if (r.ok) refresh(root, packageName); });
+    }).then((r) => {
+      if (!r.cancelled) appendEvent({ type: 'recompile', pkg: packageName, result: r.ok ? 'ok' : 'fail', detail: r.error ? (r.error.message || String(r.error)) : '' });
+      if (r.ok) refresh(root, packageName);
+    });
   });
   const reset = root.querySelector('[data-act="reset-compile"]');
   if (reset) reset.addEventListener('click', () => {
@@ -317,7 +333,10 @@ function wireActions(root, packageName) {
       successMessage: '已重置编译状态',
       failureTitle: '重置失败',
       execute: shellAction(`cmd package compile --reset ${packageName}`),
-    }).then((r) => { if (r.ok) refresh(root, packageName); });
+    }).then((r) => {
+      if (!r.cancelled) appendEvent({ type: 'reset-compile', pkg: packageName, result: r.ok ? 'ok' : 'fail', detail: r.error ? (r.error.message || String(r.error)) : '' });
+      if (r.ok) refresh(root, packageName);
+    });
   });
 }
 

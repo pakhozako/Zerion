@@ -9,6 +9,10 @@
 import { exec, execOk, moduleInfo, BridgeError } from './bridge.js';
 import { analyzeOatBytes, hexDumpToBytes } from './oat.js';
 
+// Mounted module directory on device (Magisk / KernelSU / APatch all mount
+// modules here).  The WebUI runs the module's action.sh from this cwd.
+export const MODULE_DIR = '/data/adb/modules/zerion';
+
 // ---------------------------------------------------------------------------
 // getprop helpers
 // ---------------------------------------------------------------------------
@@ -421,6 +425,47 @@ export async function collectRecentlyCompiled() {
     return { byPath, error: null };
   } catch (e) {
     return { byPath: new Map(), error: e.message || String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// On-device event log (events.jsonl)
+//
+// Events are appended through the module's shared writer
+// (`action.sh log-event`, which sources state-common.sh::log_event) so the
+// escaping and bounded trimming are identical for WebUI (KSU/APatch) and CLI
+// (Magisk) actions.  The log lives in /data/adb/zerion/events.jsonl; the
+// file is a proxy for "what Zerion did", NOT a record of system-initiated
+// dexopt (that stays the OAT-mtime proxy).  Logging is best-effort: a
+// failure to append must never break the action itself.
+// ---------------------------------------------------------------------------
+
+// POSIX single-quote escaping for one shell argument.
+function shq(v) {
+  return "'" + String(v == null ? '' : v).replace(/'/g, `'\''`) + "'";
+}
+
+export async function appendEvent({ type, pkg = '', detail = '', result = 'ok' }) {
+  if (!type) return;
+  const cmd = `sh action.sh log-event ${shq(type)} ${shq(pkg)} ${shq(detail)} ${shq(result)}`;
+  try {
+    await execOk(cmd, { cwd: MODULE_DIR });
+  } catch { /* best-effort: never break the calling action */ }
+}
+
+// Newest-first event list, capped at `limit`.  Malformed lines are skipped
+// (tolerant reader); a missing/unreadable log yields [] (no events).
+export async function collectEvents(limit = 20) {
+  try {
+    const r = await execOk('tail -n 200 /data/adb/zerion/events.jsonl 2>/dev/null');
+    const events = [];
+    for (const line of r.stdout.split('\n')) {
+      if (!line.trim()) continue;
+      try { events.push(JSON.parse(line)); } catch { /* skip malformed */ }
+    }
+    return events.slice(-limit).reverse();
+  } catch {
+    return [];
   }
 }
 

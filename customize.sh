@@ -131,6 +131,7 @@ main() {
   snapshot_originals || { ui_print_error "failed to snapshot original property values"; return 1; }
   write_install_state "$MODDIR/state.info" || {
     ui_print_error "failed to write device state to $DATA_DIR/state.json"; return 1; }
+  log_event install "" "module installed" "ok"
   ui_print "Original property values snapshot at $ORIGINALS"
   ui_print "Device state recorded at $DATA_DIR/state.json"
   ui_print "Reboot for the properties in system.prop to take effect."
