@@ -362,6 +362,27 @@ export async function collectOatStorage() {
   }
 }
 
+// Top apps by OAT artifact directory size (per-app `du -sk` on each
+// /data/app/*/oat dir).  Read-only; a failed read yields [] (section hidden).
+export async function collectOatStorageTop(limit = 5) {
+  try {
+    const r = await execOk('du -sk /data/app/*/oat 2>/dev/null');
+    const rows = [];
+    for (const line of r.stdout.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      const kb = parseInt(parts[0] || '', 10);
+      const path = parts.slice(1).join(' ');
+      if (!Number.isFinite(kb) || !path) continue;
+      const m = path.match(/\/data\/app\/~~[^/]+\/([^/]+)\/oat$/);
+      rows.push({ kb, path, pkg: m ? m[1] : null });
+    }
+    rows.sort((a, b) => b.kb - a.kb);
+    return rows.slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Runtime profiles (current-user usage profiles)
 //

@@ -7,7 +7,7 @@
 import { icon } from '../core/icons.js';
 import { escapeHtml, formatBytes, formatBytesExact, formatDate, formatRelative, sdkLabel, reasonLabel, reasonTech, compilerFilterLabel, managerLabel, eventTypeLabel, eventResultChip } from '../core/format.js';
 import { statusOf } from '../core/state.js';
-import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, collectRecentlyCompiled, collectEvents, appendEvent, MODULE_DIR, buildAppMeta, appLabel, primaryStatus, appHealth } from '../core/data.js';
+import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, collectOatStorageTop, collectRecentlyCompiled, collectEvents, appendEvent, MODULE_DIR, buildAppMeta, appLabel, primaryStatus, appHealth } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card, emptySection } from '../components/section.js';
 import { infoRow, wireRawToggles } from '../components/info-row.js';
@@ -17,17 +17,18 @@ import { skeletonState, errorState, wireErrorState } from '../components/state-v
 export async function mount(root) {
   root.innerHTML = skeletonState('dashboard');
   try {
-    const [device, moduleState, packages, oat, recent, events] = await Promise.all([
+    const [device, moduleState, packages, oat, oatTop, recent, events] = await Promise.all([
       collectDeviceInfo(),
       collectModuleState(),
       collectDexoptAll(),
       collectOatStorage(),
+      collectOatStorageTop(5),
       collectRecentlyCompiled(),
       collectEvents(10),
     ]);
     const summary = summarizeDexopt(packages);
     const meta = buildAppMeta(packages.map((p) => p.packageName));
-    render(root, { device, moduleState, summary, oat, recent, events, meta, packages });
+    render(root, { device, moduleState, summary, oat, oatTop, recent, events, meta, packages });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取设备状态',
@@ -48,7 +49,7 @@ function overallStatus(summary, device) {
   return 'healthy';
 }
 
-function render(root, { device, moduleState, summary, oat, recent, events, meta, packages }) {
+function render(root, { device, moduleState, summary, oat, oatTop, recent, events, meta, packages }) {
   const status = overallStatus(summary, device);
   const st = statusOf(status);
 
@@ -114,6 +115,18 @@ function render(root, { device, moduleState, summary, oat, recent, events, meta,
        <div class="z-body-small z-on-surface-variant" style="padding:6px 4px 0;">Zerion 在设备端记录的操作历史（/data/adb/zerion/events.jsonl）。</div>`
     : '';
 
+  const healthByPkg = new Map(packages.map((p) => [p.packageName, appHealth(p)]));
+  const storageHtml = oatTop && oatTop.length
+    ? `<div class="z-list">${oatTop.map((row) => appRow({
+        packageName: row.pkg || row.path,
+        label: row.pkg ? appLabel(meta, row.pkg) : row.path,
+        status: row.pkg ? (healthByPkg.get(row.pkg) || 'unknown') : 'unknown',
+        sub: row.pkg ? formatBytes(row.kb) : formatBytes(row.kb) + ' · ' + row.path,
+        href: row.pkg ? `#/apps/${encodeURIComponent(row.pkg)}` : '#/apps',
+      })).join('')}</div>
+       <div class="z-body-small z-on-surface-variant" style="padding:6px 4px 0;">按 OAT 产物目录大小排序（du 统计）。</div>`
+    : '';
+
   const attentionHtml = summary.attentionApps.length
     ? `<div class="z-body-small z-on-surface-variant" style="padding:0 4px 6px;">这些应用当前未充分编译（仅校验 / 仅提取等），可能影响启动与运行性能。点按应用查看原因与操作。</div>
        <div class="z-list">${summary.attentionApps.slice(0, 8).map(({ pkg }) => {
@@ -176,6 +189,8 @@ function render(root, { device, moduleState, summary, oat, recent, events, meta,
         ${reasonRows ? `<div class="z-label-medium z-on-surface-variant" style="padding:12px 4px 0;">编译原因</div>${reasonRows}` : ''}`,
       footer: summary.total ? `<a class="z-section-action" href="#/apps">查看全部 ${summary.total} 个应用</a>` : '',
     }) })}
+
+    ${storageHtml ? section({ title: '空间占用', body: storageHtml }) : ''}
 
     ${section({ title: '系统', body: card({ body: systemRows.map(([l, v, t]) => infoRow({ label: l, value: v, tech: t })).join('') }) })}
   `;
