@@ -9,7 +9,7 @@ import { escapeHtml, formatBytes, reasonLabel, reasonTech, compilerFilterLabel, 
 import { statusOf } from '../core/state.js';
 import {
   collectDexoptApp, collectArtifacts, artifactHealth, primaryStatus,
-  appHealth, buildAppMeta, appLabel, collectProfile,
+  appHealth, buildAppMeta, appLabel, collectProfile, collectOatArtifactMeta,
 } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card } from '../components/section.js';
@@ -33,8 +33,9 @@ export async function mount(root, packageName) {
       ? await collectArtifacts(primary.location || pkg.dexFiles.find((d) => d.isPrimary).path, primary.isa)
       : null;
     const profile = await collectProfile(packageName);
+    const oatMeta = primary ? await collectOatArtifactMeta(artifacts, primary) : null;
     const meta = buildAppMeta([packageName]);
-    render(root, { pkg, primary, artifacts, profile, meta });
+    render(root, { pkg, primary, artifacts, oatMeta, profile, meta });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取编译状态',
@@ -48,7 +49,7 @@ export async function mount(root, packageName) {
 
 export function unmount() { /* nothing to clean up */ }
 
-function render(root, { pkg, primary, artifacts, profile, meta }) {
+function render(root, { pkg, primary, artifacts, oatMeta, profile, meta }) {
   const label = appLabel(meta, pkg.packageName);
   const health = appHealth(pkg);
   const st = statusOf(health);
@@ -104,6 +105,7 @@ function render(root, { pkg, primary, artifacts, profile, meta }) {
     ${section({ title: '编译产物', body: card({
       body: `
         <div class="z-info-row"><div class="z-info-label">产物完整性</div><div class="z-info-value">${artifactStatusText(artifactStatus)}</div></div>
+        ${oatMetaRows(oatMeta, primary)}
         ${artifactRows}`,
     }) })}
 
@@ -148,6 +150,60 @@ function humanSummary(health, filter) {
 // Runtime profile status for the current users.  A missing profile is a
 // normal state (JIT has not written usage data yet), shown as such rather
 // than as an error or "未知".
+// OAT artifact-level evidence: what dex2oat actually wrote into the OAT
+// header (compiler-filter / compilation-reason), plus a consistency check
+// against the package-manager record.  Everything here degrades to
+// "无法确认" instead of guessing.
+function oatMetaRows(meta, primary) {
+  if (!meta) return '';
+  if (meta.kind === 'unreadable') {
+    return `
+      <div class="z-info-row"><div class="z-info-label">产物实际编译</div><div class="z-info-value">无法确认<span class="z-tech">${escapeHtml(meta.error || '读取失败')}</span></div></div>`;
+  }
+  const filter = compilerFilterLabel(meta.filter);
+  const tech = `OAT v${escapeHtml(meta.version || '?')}${meta.android ? ` · Android ${meta.android}` : ''}${meta.isa ? ` · ${isaLabel(meta.isa)}` : ''}`;
+  const raw = [
+    `compiler-filter=${meta.filter || ''}`,
+    `compilation-reason=${meta.reason || ''}`,
+    meta.warnings && meta.warnings.length ? 'warnings:\n' + meta.warnings.join('\n') : '',
+  ].filter(Boolean).join('\n');
+  const statusRow = meta.status === 'ok' ? '' : `
+    <div class="z-info-row"><div class="z-info-label">解析状态</div><div class="z-info-value">${oatStatusText(meta.status)}</div></div>`;
+  return `
+    ${statusRow}
+    <div class="z-info-row"><div class="z-info-label">实际编译策略</div><div class="z-info-value">${filter.human}<span class="z-tech">${filter.tech}</span></div></div>
+    <div class="z-info-row"><div class="z-info-label">实际编译原因</div><div class="z-info-value">${reasonLabel(meta.reason)}<span class="z-tech">${escapeHtml(meta.reason || '')}</span></div></div>
+    ${oatConsistencyRow(primary, meta)}
+    <button type="button" class="z-raw-toggle" data-raw-toggle aria-expanded="false">${icon('expand_more', 16)}<span>OAT 头详情</span></button>
+    <pre class="z-raw" data-raw hidden>${escapeHtml(raw)}</pre>`;
+}
+
+function oatStatusText(status) {
+  switch (status) {
+    case 'unknown_version': return '<span class="z-status z-status--unknown">OAT 版本未知</span>';
+    case 'truncated': return '<span class="z-status z-status--unknown">产物数据不完整</span>';
+    case 'bad_kv': return '<span class="z-status z-status--warning">产物元数据异常</span>';
+    case 'not_oat': return '<span class="z-status z-status--unknown">不是 OAT 产物</span>';
+    default: return '<span class="z-status z-status--unknown">无法确认</span>';
+  }
+}
+
+function oatConsistencyRow(primary, meta) {
+  const sys = primary && primary.compilerFilter;
+  const art = meta.filter;
+  if (!sys || !art) {
+    return `<div class="z-info-row"><div class="z-info-label">与系统记录</div><div class="z-info-value">无法确认<span class="z-tech">缺少系统记录或产物元数据</span></div></div>`;
+  }
+  const same = sys === art;
+  const chip = same
+    ? '<span class="z-status z-status--healthy">一致</span>'
+    : '<span class="z-status z-status--warning">不一致</span>';
+  const tech = same
+    ? `系统记录 ${sys} · 产物 ${art}`
+    : `系统记录 ${sys}，产物 ${art}（可能因版本或时间差，需进一步确认）`;
+  return `<div class="z-info-row"><div class="z-info-label">与系统记录</div><div class="z-info-value">${chip}<span class="z-tech">${escapeHtml(tech)}</span></div></div>`;
+}
+
 function profileRows(profile) {
   if (profile && profile.error) {
     return `<div class="z-info-row"><div class="z-info-label">运行时 Profile</div><div class="z-info-value">未知<span class="z-tech">${escapeHtml(profile.error)}</span></div></div>`;

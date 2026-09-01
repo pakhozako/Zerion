@@ -7,6 +7,7 @@
 // unparseable input degrades to UNKNOWN instead of guessing.
 
 import { exec, execOk, moduleInfo, BridgeError } from './bridge.js';
+import { analyzeOatBytes, hexDumpToBytes } from './oat.js';
 
 // ---------------------------------------------------------------------------
 // getprop helpers
@@ -242,6 +243,43 @@ function parseLs(text) {
     files.push({ name, size: Number.isFinite(size) ? size : null, raw: line });
   }
   return files;
+}
+
+// ---------------------------------------------------------------------------
+// OAT artifact-level evidence (compiler-filter / compilation-reason written
+// by dex2oat into the OAT header key-value store).  Read-only; the head of
+// the file is read via od (toybox) and parsed by core/oat.js (port of the
+// host oatfile.py).  Unreadable / unknown versions degrade to UNKNOWN.
+// ---------------------------------------------------------------------------
+
+export async function collectOatHeader(filePath) {
+  try {
+    const r = await execOk(`od -An -tx1 -N 65536 "${filePath}" 2>/dev/null`);
+    const bytes = hexDumpToBytes(r.stdout);
+    if (!bytes) return { bytes: null, error: 'od 输出无法解析' };
+    return { bytes, error: null };
+  } catch (e) {
+    return { bytes: null, error: e.message || String(e) };
+  }
+}
+
+export async function collectOatArtifactMeta(artifacts, primary) {
+  const odex = artifacts && artifacts.files.find((f) => f.name === 'base.odex');
+  if (!odex) return null; // no OAT artifact for the primary dex
+  const path = (primary && primary.location) || (artifacts.oatDir + 'base.odex');
+  const { bytes, error } = await collectOatHeader(path);
+  if (!bytes) return { kind: 'unreadable', error, filter: null, reason: null, isa: null, android: null, version: null, warnings: [] };
+  const a = analyzeOatBytes(bytes);
+  return {
+    kind: 'oat',
+    status: a.status,
+    filter: a.compilerFilter,
+    reason: a.compilationReason,
+    isa: a.instructionSet,
+    android: a.android,
+    version: a.versionRaw,
+    warnings: a.warnings,
+  };
 }
 
 export function artifactHealth(artifacts, apk) {
