@@ -195,20 +195,23 @@ export function appHealth(pkg) {
 export function summarizeDexopt(packages) {
   const total = packages.length;
   const byFilter = new Map();
+  const byReason = new Map();
   let attention = 0;
   const attentionApps = [];
   for (const pkg of packages) {
     const st = primaryStatus(pkg);
     const filter = st ? st.compilerFilter : '(none)';
+    const reason = st && st.reason ? st.reason : '(none)';
     byFilter.set(filter, (byFilter.get(filter) || 0) + 1);
+    byReason.set(reason, (byReason.get(reason) || 0) + 1);
     const health = appHealth(pkg);
     if (health === 'warning') {
       attention += 1;
       attentionApps.push({ pkg, status: st });
     }
   }
-  const sorted = [...byFilter.entries()].sort((a, b) => b[1] - a[1]);
-  return { total, byFilter: sorted, attention, attentionApps };
+  const sortDesc = (m) => [...m.entries()].sort((a, b) => b[1] - a[1]);
+  return { total, byFilter: sortDesc(byFilter), byReason: sortDesc(byReason), attention, attentionApps };
 }
 
 // ---------------------------------------------------------------------------

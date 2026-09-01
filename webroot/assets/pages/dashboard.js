@@ -67,10 +67,17 @@ function render(root, { device, moduleState, summary, oat, recent, meta, package
     ['OAT 体积', oat.oatKb != null ? formatBytes(oat.oatKb) : '未知', oat.oatKb != null ? formatBytesExact(oat.oatKb) : ''],
   ].filter((r) => r[1] !== '');
 
-  const filterRows = summary.byFilter.map(([filter, count]) => {
-    const f = compilerFilterLabel(filter);
-    return `<div class="z-summary-row"><div class="z-summary-label">${escapeHtml(f.human)}</div><div class="z-summary-count">${count} 个</div></div>`;
-  }).join('');
+  const filterRows = summary.byFilter
+    .filter(([filter]) => filter !== '(none)')
+    .map(([filter, count]) => {
+      const f = compilerFilterLabel(filter);
+      return `<div class="z-summary-row"><div class="z-summary-label">${escapeHtml(f.human)}</div><div class="z-summary-count">${count} 个</div></div>`;
+    }).join('');
+  const reasonRows = summary.byReason
+    .filter(([reason]) => reason !== '(none)')
+    .map(([reason, count]) => `
+      <div class="z-summary-row"><div class="z-summary-label">${escapeHtml(reasonLabel(reason))}</div><div class="z-summary-count">${count} 个</div></div>`)
+    .join('');
 
   // "Recently compiled" = top apps by primary OAT artifact mtime (a real
   // "recent activity" seed; the artifact file is written by dex2oat).
@@ -148,7 +155,10 @@ function render(root, { device, moduleState, summary, oat, recent, meta, package
     ${section({ title: '最近编译', body: recentHtml })}
 
     ${section({ title: '编译概览', body: card({
-      body: filterRows || '<div class="z-on-surface-variant">暂无数据</div>',
+      body: `
+        <div class="z-label-medium z-on-surface-variant" style="padding:4px 4px 0;">编译策略</div>
+        ${filterRows || '<div class="z-on-surface-variant">暂无数据</div>'}
+        ${reasonRows ? `<div class="z-label-medium z-on-surface-variant" style="padding:12px 4px 0;">编译原因</div>${reasonRows}` : ''}`,
       footer: summary.total ? `<a class="z-section-action" href="#/apps">查看全部 ${summary.total} 个应用</a>` : '',
     }) })}
 

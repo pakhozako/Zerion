@@ -59,10 +59,23 @@ function render(root, { pkg, primary, artifacts, oatMeta, age, profile, meta }) 
   const filter = primary ? compilerFilterLabel(primary.compilerFilter) : null;
   const reason = primary ? primary.reason : '';
 
+  // Additional ISA variants of the primary dex (e.g. arm64 + arm), so the
+  // diagnosis is complete on multi-ABI installs instead of showing only the
+  // primary-ABI status.
+  const primaryDex = pkg.dexFiles.find((d) => d.isPrimary);
+  const extraIsaRows = primary && primaryDex
+    ? primaryDex.statuses.filter((s) => s.isa !== primary.isa).map((s) => infoRow({
+        label: isaLabel(s.isa),
+        value: compilerFilterLabel(s.compilerFilter).human,
+        tech: `${s.compilerFilter} · ${reasonLabel(s.reason)}`,
+      })).join('')
+    : '';
+
   const stateRows = primary ? [
     infoRow({ label: '编译策略', value: filter.human, tech: filter.tech }),
     infoRow({ label: '编译原因', value: reasonLabel(reason), tech: reasonTech(reason) }),
     infoRow({ label: 'ABI', value: isaLabel(primary.isa), tech: primary.isa }),
+    extraIsaRows,
     primary.location ? infoRow({ label: '位置', value: primary.location }) : '',
   ].join('') : '<div class="z-on-surface-variant">没有可用的编译状态数据。</div>';
 
