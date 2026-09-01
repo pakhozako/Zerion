@@ -85,6 +85,19 @@ export function formatBytesExact(kb) {
   return `${n.toLocaleString('zh-CN')} KB`;
 }
 
+// Human relative time ("x 分钟前 / x 小时前 / x 天前"), falling back to an
+// absolute date for old timestamps.  Used for artifact / compile recency.
+export function formatRelative(epoch) {
+  const n = Number(epoch);
+  if (!Number.isFinite(n) || n <= 0) return '未知';
+  const diff = Math.max(0, Math.floor(Date.now() / 1000) - n);
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`;
+  return formatDate(n);
+}
+
 export function formatDate(ts) {
   if (!ts) return '未知';
   const d = new Date(Number(ts) * 1000);

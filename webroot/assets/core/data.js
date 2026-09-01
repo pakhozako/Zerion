@@ -349,6 +349,45 @@ export async function collectProfile(packageName) {
 }
 
 // ---------------------------------------------------------------------------
+// Artifact recency (OAT file mtime as "last compiled" proxy)
+//
+// toybox provides both `stat -c %Y` (Mod unix time) and `date -r FILE +%s`
+// (verified in AOSP external/toybox toys/other/stat.c and toys/posix/date.c);
+// we try stat first and fall back to date.  A missing/unknown value degrades
+// to null (shown as 无法确认), never guessed.
+// ---------------------------------------------------------------------------
+
+export async function collectArtifactAge(filePath) {
+  const cmd = `(stat -c %Y "${filePath}" 2>/dev/null || date -r "${filePath}" +%s 2>/dev/null) || echo -n`;
+  try {
+    const r = await execOk(cmd);
+    const epoch = parseInt(r.stdout.trim(), 10);
+    return { epoch: Number.isFinite(epoch) && epoch > 0 ? epoch : null, error: null };
+  } catch (e) {
+    return { epoch: null, error: e.message || String(e) };
+  }
+}
+
+// Collect mtime for every primary OAT artifact: "path epoch" lines.
+export async function collectRecentlyCompiled() {
+  const cmd = `for f in /data/app/*/oat/*/base.odex; do [ -f "$f" ] || continue; m=$(stat -c %Y "$f" 2>/dev/null); [ -n "$m" ] || m=$(date -r "$f" +%s 2>/dev/null); [ -n "$m" ] && echo "$m $f"; done`;
+  try {
+    const r = await execOk(cmd);
+    const byPath = new Map();
+    for (const line of r.stdout.split('\n')) {
+      const i = line.indexOf(' ');
+      if (i < 0) continue;
+      const epoch = parseInt(line.slice(0, i), 10);
+      const path = line.slice(i + 1).trim();
+      if (Number.isFinite(epoch) && path) byPath.set(path, epoch);
+    }
+    return { byPath, error: null };
+  } catch (e) {
+    return { byPath: new Map(), error: e.message || String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Third-party package list (for Apps list filter)
 // ---------------------------------------------------------------------------
 

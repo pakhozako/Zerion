@@ -5,9 +5,9 @@
 // information lives in App Details / deeper pages, not here.
 
 import { icon } from '../core/icons.js';
-import { escapeHtml, formatBytes, formatBytesExact, formatDate, sdkLabel, reasonLabel, reasonTech, compilerFilterLabel, managerLabel } from '../core/format.js';
+import { escapeHtml, formatBytes, formatBytesExact, formatDate, formatRelative, sdkLabel, reasonLabel, reasonTech, compilerFilterLabel, managerLabel } from '../core/format.js';
 import { statusOf } from '../core/state.js';
-import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, buildAppMeta, appLabel, primaryStatus, appHealth } from '../core/data.js';
+import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, collectRecentlyCompiled, buildAppMeta, appLabel, primaryStatus, appHealth } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card, emptySection } from '../components/section.js';
 import { infoRow, wireRawToggles } from '../components/info-row.js';
@@ -19,15 +19,16 @@ const MODULE_DIR = '/data/adb/modules/zerion';
 export async function mount(root) {
   root.innerHTML = skeletonState('dashboard');
   try {
-    const [device, moduleState, packages, oat] = await Promise.all([
+    const [device, moduleState, packages, oat, recent] = await Promise.all([
       collectDeviceInfo(),
       collectModuleState(),
       collectDexoptAll(),
       collectOatStorage(),
+      collectRecentlyCompiled(),
     ]);
     const summary = summarizeDexopt(packages);
-    const meta = buildAppMeta(summary.attentionApps.map((a) => a.pkg.packageName));
-    render(root, { device, moduleState, summary, oat, meta });
+    const meta = buildAppMeta(packages.map((p) => p.packageName));
+    render(root, { device, moduleState, summary, oat, recent, meta, packages });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取设备状态',
@@ -48,7 +49,7 @@ function overallStatus(summary, device) {
   return 'healthy';
 }
 
-function render(root, { device, moduleState, summary, oat, meta }) {
+function render(root, { device, moduleState, summary, oat, recent, meta, packages }) {
   const status = overallStatus(summary, device);
   const st = statusOf(status);
 
@@ -70,6 +71,29 @@ function render(root, { device, moduleState, summary, oat, meta }) {
     const f = compilerFilterLabel(filter);
     return `<div class="z-summary-row"><div class="z-summary-label">${escapeHtml(f.human)}</div><div class="z-summary-count">${count} 个</div></div>`;
   }).join('');
+
+  // "Recently compiled" = top apps by primary OAT artifact mtime (a real
+  // "recent activity" seed; the artifact file is written by dex2oat).
+  const recentItems = [];
+  const epochByLoc = (recent && recent.byPath) || new Map();
+  for (const pkg of packages) {
+    const st = primaryStatus(pkg);
+    const loc = st && st.location;
+    if (!loc) continue;
+    const epoch = epochByLoc.get(loc);
+    if (epoch == null) continue;
+    recentItems.push({ pkg, epoch });
+  }
+  recentItems.sort((a, b) => b.epoch - a.epoch);
+  const recentHtml = recentItems.length
+    ? `<div class="z-list">${recentItems.slice(0, 5).map(({ pkg, epoch }) => appRow({
+        packageName: pkg.packageName,
+        label: appLabel(meta, pkg.packageName),
+        status: appHealth(pkg),
+        sub: formatRelative(epoch),
+        href: `#/apps/${encodeURIComponent(pkg.packageName)}`,
+      })).join('')}</div>`
+    : emptySection('schedule', '暂无可用的产物时间', '无法读取 OAT 产物时间（可能需要 root 权限或当前系统不支持该查询）。');
 
   const attentionHtml = summary.attentionApps.length
     ? `<div class="z-list">${summary.attentionApps.slice(0, 8).map(({ pkg }) => {
@@ -120,6 +144,8 @@ function render(root, { device, moduleState, summary, oat, meta }) {
           <div class="z-body-small z-on-surface-variant" style="padding-top:8px;">应用后属性在系统下次 dexopt 或重启时消费；恢复原值会立即回写安装时快照的值。</div>`,
       }),
     })}
+
+    ${section({ title: '最近编译', body: recentHtml })}
 
     ${section({ title: '编译概览', body: card({
       body: filterRows || '<div class="z-on-surface-variant">暂无数据</div>',

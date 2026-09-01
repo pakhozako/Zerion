@@ -5,11 +5,12 @@
 // explicit dexopt actions with full confirm -> running -> result feedback.
 
 import { icon } from '../core/icons.js';
-import { escapeHtml, formatBytes, reasonLabel, reasonTech, compilerFilterLabel, isaLabel } from '../core/format.js';
+import { escapeHtml, formatBytes, formatDate, formatRelative, reasonLabel, reasonTech, compilerFilterLabel, isaLabel } from '../core/format.js';
 import { statusOf } from '../core/state.js';
 import {
   collectDexoptApp, collectArtifacts, artifactHealth, primaryStatus,
   appHealth, buildAppMeta, appLabel, collectProfile, collectOatArtifactMeta,
+  collectArtifactAge,
 } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card } from '../components/section.js';
@@ -34,8 +35,10 @@ export async function mount(root, packageName) {
       : null;
     const profile = await collectProfile(packageName);
     const oatMeta = primary ? await collectOatArtifactMeta(artifacts, primary) : null;
+    const odexPath = primary && (primary.location || (artifacts && artifacts.oatDir ? artifacts.oatDir + 'base.odex' : ''));
+    const age = odexPath ? await collectArtifactAge(odexPath) : null;
     const meta = buildAppMeta([packageName]);
-    render(root, { pkg, primary, artifacts, oatMeta, profile, meta });
+    render(root, { pkg, primary, artifacts, oatMeta, age, profile, meta });
   } catch (err) {
     root.innerHTML = errorState({
       title: '无法读取编译状态',
@@ -49,7 +52,7 @@ export async function mount(root, packageName) {
 
 export function unmount() { /* nothing to clean up */ }
 
-function render(root, { pkg, primary, artifacts, oatMeta, profile, meta }) {
+function render(root, { pkg, primary, artifacts, oatMeta, age, profile, meta }) {
   const label = appLabel(meta, pkg.packageName);
   const health = appHealth(pkg);
   const st = statusOf(health);
@@ -105,6 +108,7 @@ function render(root, { pkg, primary, artifacts, oatMeta, profile, meta }) {
     ${section({ title: '编译产物', body: card({
       body: `
         <div class="z-info-row"><div class="z-info-label">产物完整性</div><div class="z-info-value">${artifactStatusText(artifactStatus)}</div></div>
+        ${ageRow(age)}
         ${oatMetaRows(oatMeta, primary)}
         ${artifactRows}`,
     }) })}
@@ -154,6 +158,14 @@ function humanSummary(health, filter) {
 // header (compiler-filter / compilation-reason), plus a consistency check
 // against the package-manager record.  Everything here degrades to
 // "无法确认" instead of guessing.
+// "Last compiled" proxy: the OAT artifact's file mtime (written by dex2oat).
+function ageRow(age) {
+  if (!age || !age.epoch) {
+    return `<div class="z-info-row"><div class="z-info-label">最近编译</div><div class="z-info-value">无法确认<span class="z-tech">${age && age.error ? escapeHtml(age.error) : '没有可用的产物时间'}</span></div></div>`;
+  }
+  return `<div class="z-info-row"><div class="z-info-label">最近编译</div><div class="z-info-value">${escapeHtml(formatRelative(age.epoch))}<span class="z-tech">OAT 文件修改时间 · ${escapeHtml(formatDate(age.epoch))}</span></div></div>`;
+}
+
 function oatMetaRows(meta, primary) {
   if (!meta) return '';
   if (meta.kind === 'unreadable') {
