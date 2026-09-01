@@ -164,6 +164,18 @@ html, body {
   flex-direction: column;
 }
 
+/* Keyboard focus for custom interactive elements (links, list rows, raw
+   toggles, metric tiles).  M3 components bring their own focus styles. */
+a:focus-visible,
+.z-app-row:focus-visible,
+.z-raw-toggle:focus-visible,
+.z-metric--link:focus-visible,
+.z-section-action:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+  border-radius: var(--z-radius-sm);
+}
+
 /* ================= Typography ================= */
 .z-title-large {
   font-size: 22px;
@@ -284,8 +296,10 @@ md-card.z-card {
   color: var(--md-sys-color-primary);
   font: inherit;
   font-size: 12px;
-  padding: 4px 0;
+  padding: 10px 0;   /* >= 40px touch target */
+  margin-top: 2px;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 .z-raw-toggle svg { width: 16px; height: 16px; transition: transform var(--z-duration-fast) ease; }
 .z-raw-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }

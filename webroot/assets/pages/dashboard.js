@@ -99,7 +99,8 @@ function render(root, { device, moduleState, summary, oat, recent, meta, package
         status: appHealth(pkg),
         sub: formatRelative(epoch),
         href: `#/apps/${encodeURIComponent(pkg.packageName)}`,
-      })).join('')}</div>`
+      })).join('')}</div>
+       <div class="z-body-small z-on-surface-variant" style="padding:6px 4px 0;">按 OAT 产物文件的修改时间排序（dex2oat 每次写入时更新）。</div>`
     : emptySection('schedule', '暂无可用的产物时间', '无法读取 OAT 产物时间（可能需要 root 权限或当前系统不支持该查询）。');
 
   const attentionHtml = summary.attentionApps.length
