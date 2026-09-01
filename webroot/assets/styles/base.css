@@ -168,6 +168,7 @@ html, body {
    toggles, metric tiles).  M3 components bring their own focus styles. */
 a:focus-visible,
 .z-app-row:focus-visible,
+.z-event-row:focus-visible,
 .z-raw-toggle:focus-visible,
 .z-metric--link:focus-visible,
 .z-section-action:focus-visible {
@@ -390,6 +391,70 @@ md-card.z-card {
 .z-app-sub { font-size: 12px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 .z-app-end { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .z-app-end svg { width: 18px; height: 18px; fill: var(--md-sys-color-outline); }
+
+/* ================= Events page (操作记录 timeline) ================= */
+.z-day-group { margin-top: 12px; }
+.z-day-group:first-child { margin-top: 0; }
+.z-day-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 4px 2px;
+}
+.z-event-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  min-height: 56px;
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--z-radius-sm);
+}
+.z-event-row:hover { background: var(--md-sys-color-surface-container-low); }
+.z-event-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.z-event-main { flex: 1; min-width: 0; }
+.z-event-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.z-event-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.z-event-end {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.z-event-time { font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
 
 /* ================= Summary metrics ================= */
 .z-metrics { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px; }

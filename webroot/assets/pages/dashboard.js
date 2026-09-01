@@ -180,7 +180,7 @@ function render(root, { device, moduleState, summary, oat, oatTop, recent, event
 
     ${section({ title: '最近编译', body: recentHtml })}
 
-    ${eventsHtml ? section({ title: '最近操作', body: eventsHtml }) : ''}
+    ${eventsHtml ? section({ title: '最近操作', action: '全部', actionHref: '#/events', body: eventsHtml }) : ''}
 
     ${section({ title: '编译概览', body: card({
       body: `

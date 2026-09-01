@@ -156,3 +156,35 @@ export function eventResultChip(result) {
   if (r === 'fail') return '<span class="z-status z-status--error">失败</span>';
   return '<span class="z-status z-status--unknown">未知</span>';
 }
+
+// Icon name (from core/icons.js) for an event type row.
+export function eventTypeIcon(type) {
+  switch (String(type || '').trim()) {
+    case 'apply': return 'tune';
+    case 'reset':
+    case 'reset-compile': return 'restart_alt';
+    case 'recompile': return 'build';
+    case 'install':
+    case 'update': return 'update';
+    case 'uninstall': return 'delete';
+    default: return 'history';
+  }
+}
+
+// Timeline day bucket: 今天 / 昨天 / M月D日 / YYYY年M月D日.  Compared by local
+// calendar date (not raw 86400s) so DST / midnight boundaries stay correct.
+export function dayLabel(epoch) {
+  const n = Number(epoch);
+  if (!Number.isFinite(n) || n <= 0) return '未知';
+  const d = new Date(n * 1000);
+  if (Number.isNaN(d.getTime())) return '未知';
+  const now = new Date();
+  const same = (a, b) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (same(d, now)) return '今天';
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  if (same(d, yest)) return '昨天';
+  const md = `${d.getMonth() + 1}月${d.getDate()}日`;
+  return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}年${md}`;
+}

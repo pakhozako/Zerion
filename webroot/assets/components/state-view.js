@@ -43,7 +43,12 @@ export function skeletonState(variant = 'dashboard') {
       ${block('<div class="z-skeleton z-skeleton--row"></div>'.repeat(3))}
       ${block('<div class="z-skeleton z-skeleton--row"></div>'.repeat(2))}
     </div>`;
-  const body = variant === 'details' ? details : dashboard;
+  const list = `
+    <div class="z-skeleton-block">
+      <div class="z-skeleton z-skeleton--title"></div>
+      ${'<div class="z-skeleton z-skeleton--row"></div>'.repeat(5)}
+    </div>`;
+  const body = variant === 'details' ? details : variant === 'list' ? list : dashboard;
   return `<div class="z-skeleton-page" role="status" aria-label="正在加载">${body}</div>`;
 }
 

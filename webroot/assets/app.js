@@ -28,6 +28,7 @@ import { bridgeUnavailableState } from './components/state-view.js';
 import * as dashboard from './pages/dashboard.js';
 import * as apps from './pages/apps.js';
 import * as appDetails from './pages/app-details.js';
+import * as events from './pages/events.js';
 
 const headerEl = document.getElementById('app-header');
 const mainEl = document.getElementById('app-main');
@@ -46,6 +47,7 @@ function parseHash() {
   const h = location.hash || '#/';
   if (h === '#/' || h === '#' || h === '') return { page: 'dashboard' };
   if (h === '#/apps') return { page: 'apps' };
+  if (h === '#/events') return { page: 'events' };
   if (h.startsWith('#/apps?')) {
     const params = new URLSearchParams(h.replace(/^#\/apps\?/, ''));
     const filter = params.get('filter');
@@ -74,6 +76,12 @@ function renderHeader(route) {
       <div class="z-header-row">
         <h1 class="z-title-medium z-header-title">应用</h1>
       </div>`;
+  } else if (route.page === 'events') {
+    headerEl.className = 'z-header--page';
+    headerEl.innerHTML = `
+      <div class="z-header-row">
+        <h1 class="z-title-medium z-header-title">操作记录</h1>
+      </div>`;
   } else {
     headerEl.className = 'z-header--page';
     headerEl.innerHTML = `
@@ -95,6 +103,7 @@ function renderNav(route) {
   const destinations = [
     { key: 'dashboard', label: '仪表盘', hash: '#/', iconName: 'space_dashboard' },
     { key: 'apps', label: '应用', hash: '#/apps', iconName: 'apps' },
+    { key: 'events', label: '操作记录', hash: '#/events', iconName: 'history' },
   ];
   for (const d of destinations) {
     const item = document.createElement('md-nav-item');
@@ -134,6 +143,9 @@ function route() {
   } else if (r.page === 'apps') {
     current = apps;
     apps.mount(mainEl, { filter: r.filter });
+  } else if (r.page === 'events') {
+    current = events;
+    events.mount(mainEl);
   } else {
     current = appDetails;
     appDetails.mount(mainEl, r.packageName);
