@@ -11,6 +11,22 @@ import { appRow } from '../components/app-row.js';
 import { loadingState, errorState, wireErrorState, emptyState } from '../components/state-view.js';
 import { icon } from '../core/icons.js';
 
+// What the active filter means, in one line (人话优先): the Apps list is a
+// thin entry point to App Details, and "需关注" needs a plain explanation of
+// what the state implies and what to do about it.
+function filterHint(filter) {
+  switch (filter) {
+    case 'attention':
+      return '这些应用当前未充分编译（仅校验 / 仅提取等），可能影响启动与运行性能。点按应用查看原因与操作。';
+    case 'user':
+      return '显示第三方应用，点按查看详细编译状态。';
+    case 'system':
+      return '显示系统应用，点按查看详细编译状态。';
+    default:
+      return '点按应用查看详细编译状态、产物与操作。';
+  }
+}
+
 let state = {
   packages: [],
   meta: new Map(),
@@ -66,7 +82,8 @@ function renderChrome(root) {
       ${chip('user', '第三方')}
       ${chip('system', '系统')}
     </div>
-    <div class="z-body-small z-on-surface-variant" style="padding:8px 4px 4px;" data-count></div>
+    <div class="z-body-small z-on-surface-variant" style="padding:10px 4px 2px;">${filterHint(state.filter)}</div>
+    <div class="z-body-small z-on-surface-variant" style="padding:2px 4px 4px;" data-count></div>
     <div data-list></div>
   `;
 
@@ -113,7 +130,9 @@ function renderList(countEl) {
           href: `#/apps/${encodeURIComponent(pkg.packageName)}`,
         });
       }).join('')}</div>`
-    : emptyState({ title: '没有匹配的应用', detail: '换个关键词或筛选条件试试。', iconName: 'search' });
+    : (state.filter === 'attention' && !state.query.trim()
+        ? emptyState({ title: '没有需要关注的应用', detail: '所有应用的编译状态都正常。', iconName: 'check_circle' })
+        : emptyState({ title: '没有匹配的应用', detail: '换个关键词或筛选条件试试。', iconName: 'search' }));
 
   if (countEl) {
     countEl.textContent = `共 ${state.packages.length} 个应用，显示 ${sorted.length} 个`;

@@ -115,7 +115,8 @@ function render(root, { device, moduleState, summary, oat, recent, events, meta,
     : '';
 
   const attentionHtml = summary.attentionApps.length
-    ? `<div class="z-list">${summary.attentionApps.slice(0, 8).map(({ pkg }) => {
+    ? `<div class="z-body-small z-on-surface-variant" style="padding:0 4px 6px;">这些应用当前未充分编译（仅校验 / 仅提取等），可能影响启动与运行性能。点按应用查看原因与操作。</div>
+       <div class="z-list">${summary.attentionApps.slice(0, 8).map(({ pkg }) => {
         const p = primaryStatus(pkg);
         return appRow({
           packageName: pkg.packageName,
