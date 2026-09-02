@@ -7,7 +7,7 @@
 import { icon } from '../core/icons.js';
 import { escapeHtml, formatBytes, formatBytesExact, formatDate, formatRelative, sdkLabel, reasonLabel, reasonTech, compilerFilterLabel, managerLabel, eventTypeLabel, eventResultChip } from '../core/format.js';
 import { statusOf } from '../core/state.js';
-import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, collectOatStorageTop, collectRecentlyCompiled, collectEvents, appendEvent, MODULE_DIR, buildAppMeta, appLabel, primaryStatus, appHealth } from '../core/data.js';
+import { collectDeviceInfo, collectModuleState, collectDexoptAll, summarizeDexopt, collectOatStorage, collectOatStorageTop, collectRecentlyCompiled, collectEvents, appendEvent, MODULE_DIR, buildAppMeta, appLabel, primaryStatus, appHealth, oatDirForIsa } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card, emptySection } from '../components/section.js';
 import { infoRow, wireRawToggles } from '../components/info-row.js';
@@ -79,15 +79,20 @@ function render(root, { device, moduleState, summary, oat, oatTop, recent, event
       <div class="z-summary-row"><div class="z-summary-label">${escapeHtml(reasonLabel(reason))}</div><div class="z-summary-count">${count} 个</div></div>`)
     .join('');
 
-  // "Recently compiled" = top apps by primary OAT artifact mtime (a real
-  // "recent activity" seed; the artifact file is written by dex2oat).
+  // "Recently compiled" = top apps by newest primary OAT artifact mtime (a
+  // "recent activity" seed).  The oat dir is derived from the dex (APK) path +
+  // the primary ABI's ISA via the documented DexLocationToOdexFilename
+  // algorithm; we never rely on dumpsys `[location is ...]`, which AOSP marks
+  // debug-only and which Android 9 does not print at all.
   const recentItems = [];
-  const epochByLoc = (recent && recent.byPath) || new Map();
+  const epochByDir = (recent && recent.byDir) || new Map();
   for (const pkg of packages) {
+    const primaryDex = pkg.dexFiles.find((d) => d.isPrimary);
     const st = primaryStatus(pkg);
-    const loc = st && st.location;
-    if (!loc) continue;
-    const epoch = epochByLoc.get(loc);
+    if (!primaryDex || !st) continue;
+    const oatDir = oatDirForIsa(primaryDex.path, st.isa);
+    if (!oatDir) continue;
+    const epoch = epochByDir.get(oatDir);
     if (epoch == null) continue;
     recentItems.push({ pkg, epoch });
   }
@@ -100,7 +105,7 @@ function render(root, { device, moduleState, summary, oat, oatTop, recent, event
         sub: formatRelative(epoch),
         href: `#/apps/${encodeURIComponent(pkg.packageName)}`,
       })).join('')}</div>
-       <div class="z-body-small z-on-surface-variant" style="padding:6px 4px 0;">按 OAT 产物文件的修改时间排序（dex2oat 每次写入时更新）。</div>`
+       <div class="z-body-small z-on-surface-variant" style="padding:6px 4px 0;">按 OAT 产物目录最新文件的时间排序（odex/vdex/art 取最新；不同 Android 版本写入行为不同）。</div>`
     : emptySection('schedule', '暂无可用的产物时间', '无法读取 OAT 产物时间（可能需要 root 权限或当前系统不支持该查询）。');
 
   const eventsHtml = events && events.length
@@ -128,7 +133,7 @@ function render(root, { device, moduleState, summary, oat, oatTop, recent, event
     : '';
 
   const attentionHtml = summary.attentionApps.length
-    ? `<div class="z-body-small z-on-surface-variant" style="padding:0 4px 6px;">这些应用当前未充分编译（仅校验 / 仅提取等），可能影响启动与运行性能。点按应用查看原因与操作。</div>
+    ? `<div class="z-body-small z-on-surface-variant" style="padding:0 4px 6px;">点按应用查看原因与操作。</div>
        <div class="z-list">${summary.attentionApps.slice(0, 8).map(({ pkg }) => {
         const p = primaryStatus(pkg);
         return appRow({
@@ -161,7 +166,7 @@ function render(root, { device, moduleState, summary, oat, oatTop, recent, event
       title: `<span class="z-status z-status--${st.key}">${icon(st.icon, 15)}${escapeHtml(st.label)}</span>`,
       body: `
         <div class="z-info-row"><div class="z-info-label">说明</div><div class="z-info-value">${statusExplanation(status)}</div></div>
-        <div class="z-info-row"><div class="z-info-label">需关注应用</div><div class="z-info-value"><a href="#/apps">${summary.attention} 个</a> ${summary.attention ? `<span class="z-tech">可能是 verify / extract / run-from-apk 等未充分编译状态</span>` : ''}</div></div>`,
+        <div class="z-info-row"><div class="z-info-label">需关注应用</div><div class="z-info-value"><a href="#/apps">${summary.attention} 个</a></div></div>`,
     }) })}
 
     ${section({ title: '需要关注', body: attentionHtml })}

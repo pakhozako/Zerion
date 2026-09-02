@@ -271,13 +271,15 @@ function parseLs(text) {
 // ---------------------------------------------------------------------------
 // OAT artifact-level evidence (compiler-filter / compilation-reason written
 // by dex2oat into the OAT header key-value store).  Read-only; the head of
-// the file is read via od (toybox) and parsed by core/oat.js (port of the
-// host oatfile.py).  Unreadable / unknown versions degrade to UNKNOWN.
+// the file is read via od (toybox, `-v` so repeated lines are not collapsed
+// into `*`, verified on Android 16's toybox 0.8.12) and parsed by core/oat.js
+// (port of the host oatfile.py).  Unreadable / unknown versions degrade to
+// UNKNOWN.
 // ---------------------------------------------------------------------------
 
 export async function collectOatHeader(filePath) {
   try {
-    const r = await execOk(`od -An -tx1 -N 65536 "${filePath}" 2>/dev/null`);
+    const r = await execOk(`od -An -tx1 -v -N 65536 "${filePath}" 2>/dev/null`);
     const bytes = hexDumpToBytes(r.stdout);
     if (!bytes) return { bytes: null, error: 'od 输出无法解析' };
     return { bytes, error: null };
@@ -366,7 +368,10 @@ export async function collectOatStorage() {
 // /data/app/*/oat dir).  Read-only; a failed read yields [] (section hidden).
 export async function collectOatStorageTop(limit = 5) {
   try {
-    const r = await execOk('du -sk /data/app/*/oat 2>/dev/null');
+    // Android 12+ nests apps as /data/app/~~hash==/<pkg>-<suffix>/ (two levels
+    // before oat/), while older versions use /data/app/<pkg>-<suffix>/oat.
+    // Both globs are needed (verified: single glob returns nothing on API 36).
+    const r = await execOk('du -sk /data/app/*/oat /data/app/*/*/oat 2>/dev/null');
     const rows = [];
     for (const line of r.stdout.split('\n')) {
       const parts = line.trim().split(/\s+/);
@@ -411,16 +416,26 @@ export async function collectProfile(packageName) {
 }
 
 // ---------------------------------------------------------------------------
-// Artifact recency (OAT file mtime as "last compiled" proxy)
+// Artifact recency ("recently compiled" proxy)
 //
-// toybox provides both `stat -c %Y` (Mod unix time) and `date -r FILE +%s`
-// (verified in AOSP external/toybox toys/other/stat.c and toys/posix/date.c);
-// we try stat first and fall back to date.  A missing/unknown value degrades
-// to null (shown as 无法确认), never guessed.
+// We use the newest mtime across a primary OAT directory's artifacts
+// (base.odex / base.vdex / base.art) as the "last compile activity" proxy,
+// NOT the odex mtime alone.  Verified on an Android 9 (API 28) userdebug
+// emulator: after `cmd package compile -f -m everything`, base.odex keeps its
+// install-time mtime while base.vdex is rewritten (new mtime), so stat'ing
+// only base.odex reports stale times.  Which artifact a given Android version
+// rewrites differs by version; taking the newest artifact is correct for both
+// old and new behavior.  This is still a proxy: a newest-artifact timestamp
+// does not prove a dexopt run finished successfully.
+//
+// toybox provides `stat -c %Y` (verified in AOSP external/toybox
+// toys/other/stat.c).  `date -r FILE +%s` is NOT available on Android 9's
+// toybox (verified on the emulator), so we only rely on stat.  A
+// missing/unknown value degrades to null (shown as 无法确认), never guessed.
 // ---------------------------------------------------------------------------
 
-export async function collectArtifactAge(filePath) {
-  const cmd = `(stat -c %Y "${filePath}" 2>/dev/null || date -r "${filePath}" +%s 2>/dev/null) || echo -n`;
+export async function collectOatDirAge(oatDir) {
+  const cmd = `m=0; for f in "${oatDir}"base.odex "${oatDir}"base.vdex "${oatDir}"base.art; do [ -f "$f" ] || continue; t=$(stat -c %Y "$f" 2>/dev/null); [ -n "$t" ] && [ "$t" -gt "$m" ] && m=$t; done; [ "$m" -gt 0 ] && echo "$m"`;
   try {
     const r = await execOk(cmd);
     const epoch = parseInt(r.stdout.trim(), 10);
@@ -430,22 +445,27 @@ export async function collectArtifactAge(filePath) {
   }
 }
 
-// Collect mtime for every primary OAT artifact: "path epoch" lines.
+// Newest artifact mtime for every primary OAT directory: "<epoch> <oat-dir>"
+// lines.  Keyed by oat dir (not odex path) so apps whose dexopt wrote only a
+// vdex (e.g. `verify` compiles) are still reported.
 export async function collectRecentlyCompiled() {
-  const cmd = `for f in /data/app/*/oat/*/base.odex; do [ -f "$f" ] || continue; m=$(stat -c %Y "$f" 2>/dev/null); [ -n "$m" ] || m=$(date -r "$f" +%s 2>/dev/null); [ -n "$m" ] && echo "$m $f"; done`;
+  // Both layouts: Android <=11 /data/app/<pkg>-<suffix>/oat/<isa>/, Android
+  // 12+ /data/app/~~hash==/<pkg>-<suffix>/oat/<isa>/.  A single glob matches
+  // only one layout (verified on API 28 and API 36 emulators).
+  const cmd = `for d in /data/app/*/oat/*/ /data/app/*/*/oat/*/; do [ -d "$d" ] || continue; m=0; for f in "$d"base.odex "$d"base.vdex "$d"base.art; do [ -f "$f" ] || continue; t=$(stat -c %Y "$f" 2>/dev/null); [ -n "$t" ] && [ "$t" -gt "$m" ] && m=$t; done; [ "$m" -gt 0 ] && echo "$m $d"; done`;
   try {
     const r = await execOk(cmd);
-    const byPath = new Map();
+    const byDir = new Map();
     for (const line of r.stdout.split('\n')) {
       const i = line.indexOf(' ');
       if (i < 0) continue;
       const epoch = parseInt(line.slice(0, i), 10);
-      const path = line.slice(i + 1).trim();
-      if (Number.isFinite(epoch) && path) byPath.set(path, epoch);
+      const dir = line.slice(i + 1).trim();
+      if (Number.isFinite(epoch) && dir) byDir.set(dir, epoch);
     }
-    return { byPath, error: null };
+    return { byDir, error: null };
   } catch (e) {
-    return { byPath: new Map(), error: e.message || String(e) };
+    return { byDir: new Map(), error: e.message || String(e) };
   }
 }
 

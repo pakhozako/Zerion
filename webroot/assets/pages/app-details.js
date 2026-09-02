@@ -10,7 +10,7 @@ import { statusOf } from '../core/state.js';
 import {
   collectDexoptApp, collectArtifacts, artifactHealth, primaryStatus,
   appHealth, buildAppMeta, appLabel, collectProfile, collectPrimaryOatEvidence,
-  collectArtifactAge, collectEvents, appendEvent, collectReasonContext, oatPathForIsa,
+  collectOatDirAge, collectEvents, appendEvent, collectReasonContext, oatDirForIsa,
 } from '../core/data.js';
 import { runAction, shellAction } from '../core/actions.js';
 import { section, card } from '../components/section.js';
@@ -38,8 +38,12 @@ export async function mount(root, packageName) {
       : null;
     const profile = await collectProfile(packageName);
     const oatMetaAll = primary ? await collectPrimaryOatEvidence(pkg) : [];
-    const odexPath = primary && primaryDex ? oatPathForIsa(primaryDex.path, primary.isa) : null;
-    const age = odexPath ? await collectArtifactAge(odexPath) : null;
+    // "最近编译" = newest mtime across the primary OAT dir's artifacts
+    // (odex/vdex/art).  Verified on Android 9: recompiling rewrites base.vdex
+    // while base.odex keeps its install-time mtime, so a single-file stat is
+    // misleading.  See core/data.js collectOatDirAge.
+    const oatDir = primary && primaryDex ? oatDirForIsa(primaryDex.path, primary.isa) : null;
+    const age = oatDir ? await collectOatDirAge(oatDir) : null;
     const meta = buildAppMeta([packageName]);
     const events = await collectEvents(50);
     const appEvents = events.filter((ev) => ev.pkg === packageName).slice(0, 10);
@@ -229,7 +233,7 @@ function ageRow(age) {
   if (!age || !age.epoch) {
     return `<div class="z-info-row"><div class="z-info-label">最近编译</div><div class="z-info-value">无法确认<span class="z-tech">${age && age.error ? escapeHtml(age.error) : '没有可用的产物时间'}</span></div></div>`;
   }
-  return `<div class="z-info-row"><div class="z-info-label">最近编译</div><div class="z-info-value">${escapeHtml(formatRelative(age.epoch))}<span class="z-tech">OAT 文件修改时间 · ${escapeHtml(formatDate(age.epoch))}</span></div></div>`;
+  return `<div class="z-info-row"><div class="z-info-label">最近编译</div><div class="z-info-value">${escapeHtml(formatRelative(age.epoch))}<span class="z-tech">按 OAT 产物目录最新文件时间估算 · ${escapeHtml(formatDate(age.epoch))}</span></div></div>`;
 }
 
 // Per-ISA artifact-level evidence: one compact row per ISA showing the actual

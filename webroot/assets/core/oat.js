@@ -11,6 +11,12 @@
 //   + key_value_store_ ("key\0value\0" repeated)
 // The compiler-filter / compilation-reason keys are written by dex2oat and are
 // direct artifact-level evidence of what was actually compiled.
+//
+// On real devices base.odex is an ELF shared object and the OatHeader (with its
+// "oat\n" magic) is embedded at a non-zero offset (verified: Android 16
+// emulator, API 36, magic at offset 1624).  analyzeOatBytes therefore locates
+// the magic within the read window and parses the header relative to it, so
+// synthetic headers (magic at 0) and ELF-wrapped odex both work.
 
 export const STATUS = {
   OK: 'ok',
@@ -29,8 +35,13 @@ export const OAT_VERSIONS = {
   225: { android: 13, fields: 15 },
   230: { android: 14, fields: 15 },
   244: { android: 15, fields: 15 },
-  259: { android: 16, fields: 16 },
-  275: { android: 17, fields: 16 },
+  // v259 (Android 16): verified against AOSP android16-release runtime/oat/oat.h —
+  // 15 u32 fields before key_value_store_size_ (index 14 = nterp_trampoline_offset_,
+  // index 15 = key_value_store_size_), and against a real API 36 emulator odex
+  // (kv_size=5940, compiler-filter=everything, compilation-reason=cmdline).
+  // AOSP main (2026-09) still emits v259 with the same layout; no v275 is
+  // produced by current AOSP, so it is intentionally not listed (unknown_version).
+  259: { android: 16, fields: 15 },
 };
 
 // instruction_set_ numeric maps by version group (see oat-vdex-format.md).
@@ -48,6 +59,20 @@ const ISA_GROUP_BY_VERSION = {
 const OAT_MAGIC = [0x6f, 0x61, 0x74, 0x0a]; // "oat\n"
 const VDEX_MAGIC = [0x76, 0x64, 0x65, 0x78]; // "vdex"
 
+// First offset of the "oat\n" magic within `bytes`, or -1.  Real odex files
+// are ELF-wrapped, so the magic is not at offset 0.
+export function findOatMagicOffset(bytes) {
+  if (!bytes) return -1;
+  const last = bytes.length - 4;
+  for (let i = 0; i <= last; i++) {
+    if (bytes[i] === OAT_MAGIC[0] && bytes[i + 1] === OAT_MAGIC[1] &&
+        bytes[i + 2] === OAT_MAGIC[2] && bytes[i + 3] === OAT_MAGIC[3]) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function u32(bytes, off) {
   return (bytes[off] | (bytes[off + 1] << 8) | (bytes[off + 2] << 16) | (bytes[off + 3] << 24)) >>> 0;
 }
@@ -56,6 +81,29 @@ function ascii(bytes, start, end) {
   let s = '';
   for (let i = start; i < end; i++) s += String.fromCharCode(bytes[i]);
   return s;
+}
+
+// Extract the NUL-terminated value for a single kv key by scanning the store
+// for the exact "key\0" byte sequence.  Robust to Android 16+ kv stores where
+// non-deterministic fields (apex-versions, dex2oat-cmdline) are length-padded
+// with filler bytes, which breaks naive sequential key\0value\0 parsing.
+// Returns null when the key is absent or its value is not NUL-terminated.
+function extractKvValue(bytes, kvStart, kvSize, key) {
+  const end = kvStart + kvSize;
+  const keyBytes = [];
+  for (let i = 0; i < key.length; i++) keyBytes.push(key.charCodeAt(i));
+  keyBytes.push(0);
+  outer:
+  for (let i = kvStart; i + keyBytes.length <= end; i++) {
+    for (let j = 0; j < keyBytes.length; j++) {
+      if (bytes[i + j] !== keyBytes[j]) continue outer;
+    }
+    const vStart = i + keyBytes.length;
+    const nul = bytes.indexOf(0, vStart);
+    if (nul < 0 || nul >= end) return null;
+    return ascii(bytes, vStart, nul);
+  }
+  return null;
 }
 
 // Parse "key\0value\0" pairs within [off, off+size).  Returns { pairs, warnings }.
@@ -112,9 +160,11 @@ export function analyzeOatBytes(bytes) {
     headerSize: null,
     warnings: [],
   };
-  if (!bytes || bytes.length < 8 || identify(bytes) !== 'oat') return result;
+  if (!bytes || bytes.length < 8) return result;
+  const base = findOatMagicOffset(bytes);
+  if (base < 0) return result;
   result.magicOk = true;
-  const versionRaw = ascii(bytes, 4, 8).replace(/[\0 ]+$/, '');
+  const versionRaw = ascii(bytes, base + 4, base + 8).replace(/[\0 ]+$/, '');
   result.versionRaw = versionRaw;
   const version = parseInt(versionRaw, 10);
   const rec = OAT_VERSIONS[version];
@@ -126,37 +176,47 @@ export function analyzeOatBytes(bytes) {
   result.android = rec.android;
 
   const fixedSize = 8 + 4 * rec.fields;
-  if (bytes.length < fixedSize + 4) {
+  if (bytes.length < base + fixedSize + 4) {
     result.status = STATUS.TRUNCATED;
-    result.warnings.push('need ' + (fixedSize + 4) + ' bytes, have ' + bytes.length);
+    result.warnings.push('need ' + (base + fixedSize + 4) + ' bytes, have ' + bytes.length);
     return result;
   }
   // field index 1 = instruction_set_ (all layouts: checksum, instruction_set, ...)
-  const isaNum = u32(bytes, 12);
+  const isaNum = u32(bytes, base + 12);
   const isaMap = ISA_GROUPS[ISA_GROUP_BY_VERSION[version]];
   if (isaMap && isaNum in isaMap) {
     result.instructionSet = isaMap[isaNum];
     result.instructionSetKnown = true;
   }
-  const dexFileCount = u32(bytes, 20); // field index 3
+  const dexFileCount = u32(bytes, base + 20); // field index 3
   result.dexFileCount = dexFileCount;
   result.fields = { instruction_set: isaNum, dex_file_count: dexFileCount };
 
-  const kvSize = u32(bytes, fixedSize);
+  const kvSize = u32(bytes, base + fixedSize);
   result.kvSize = kvSize;
-  const kvStart = fixedSize + 4;
+  const kvStart = base + fixedSize + 4;
   result.headerSize = kvStart + kvSize;
   if (bytes.length < kvStart + kvSize) {
     result.status = STATUS.TRUNCATED;
     result.warnings.push('kv store extends past end of read data');
     return result;
   }
+  // compiler-filter / compilation-reason are the artifact evidence we need.
+  // Extract them by targeted key search (robust to length-padded
+  // non-deterministic fields on Android 16+).  The sequential parse below is
+  // best-effort display data only and never drives the status.
+  result.compilerFilter = extractKvValue(bytes, kvStart, kvSize, 'compiler-filter');
+  result.compilationReason = extractKvValue(bytes, kvStart, kvSize, 'compilation-reason');
   const { pairs, warnings } = parseKvStore(bytes, kvStart, kvSize);
-  result.kv = pairs;
+  // Keep only well-formed pair maps; a padded kv store yields misaligned
+  // pairs, which we discard rather than display as if verified.
+  result.kv = warnings.length ? {} : pairs;
   result.warnings = warnings;
-  result.compilerFilter = pairs['compiler-filter'] || null;
-  result.compilationReason = pairs['compilation-reason'] || null;
-  result.status = warnings.length ? STATUS.BAD_KV : STATUS.OK;
+  if (kvSize === 0 || result.compilerFilter !== null || result.compilationReason !== null) {
+    result.status = STATUS.OK;
+  } else {
+    result.status = STATUS.BAD_KV;
+  }
   return result;
 }
 
